@@ -8,7 +8,7 @@
     "url": "https://github.com/citrolabs"
   },
   "homepage": "https://lite.ego.app/document/",
-  "repository": "https://github.com/citrolabs/ego-lite",
+  "repository": "https://github.com/mustbearnold/ego-lite-linux",
   "license": "MIT",
   "keywords": ["browser-automation", "ai-agents", "ego-browser"],
   "skills": "./skills/",

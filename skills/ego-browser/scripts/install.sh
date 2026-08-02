@@ -225,7 +225,7 @@ install_linux() {
 	package_dir="$REPO_DIR/package/ego-browser"
 	host_source="$REPO_DIR/platform/linux/ego-browser.mjs"
 	[ -d "$package_dir" ] ||
-		die "Linux installation must run from the ego-lite checkout; package/ego-browser was not found"
+		die "Linux installation must run from the ego-lite-linux checkout; package/ego-browser was not found"
 	[ -f "$host_source" ] || die "Linux host source was not found: $host_source"
 	require_command node
 	require_command npm

@@ -1,7 +1,7 @@
 blank_issues_enabled: false
 contact_links:
   - name: Questions and ideas
-    url: https://github.com/CitroLabs/ego-lite/discussions
+    url: https://github.com/mustbearnold/ego-lite-linux/discussions
     about: Ask for help or discuss ideas that are not yet actionable issues.
   - name: Documentation
     url: https://lite.ego.app/document/
@@ -10,5 +10,5 @@ contact_links:
     url: https://discord.gg/5eGZVvHbTq
     about: Get setup help and talk with the ego lite community.
   - name: Report a security vulnerability
-    url: https://github.com/CitroLabs/ego-lite/security/advisories/new
+    url: https://github.com/mustbearnold/ego-lite-linux/security/advisories/new
     about: Privately report vulnerabilities. Do not disclose them in a public issue.

@@ -1,4 +1,4 @@
-# lefthook.yml - git hooks for ego-lite
+# lefthook.yml - git hooks for ego-lite-linux
 #
 # Enable hooks:
 #   cd package/ego-browser && npm install

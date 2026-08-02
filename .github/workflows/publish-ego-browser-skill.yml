@@ -113,7 +113,7 @@ jobs:
             --name ego-browser \
             --owner section9-lab \
             --version "$VERSION" \
-            --changelog "Release $VERSION from citrolabs/ego-lite" \
+            --changelog "Release $VERSION from ${GITHUB_REPOSITORY}" \
             --tags latest
 
           npx -y clawhub@0.21.0 inspect ego-browser --version "$VERSION" --json >/dev/null
@@ -187,7 +187,7 @@ jobs:
             --token "$SKILLHUB_TOKEN" \
             --host "$SKILLHUB_HOST" \
             --version "$VERSION" \
-            --changelog "Release $VERSION from citrolabs/ego-lite"
+            --changelog "Release $VERSION from ${GITHUB_REPOSITORY}"
 
           curl -fsS "$SKILLHUB_HOST/api/v1/skills/$SKILLHUB_SLUG" \
             | node -e 'let body=""; process.stdin.on("data", chunk => body += chunk); process.stdin.on("end", () => { const expected = process.env.VERSION; const actual = JSON.parse(body).latestVersion?.version; if (actual !== expected) throw new Error(`Expected ${expected}, got ${actual}`) })'

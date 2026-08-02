@@ -4,7 +4,7 @@
 
 **The fastest browser for AI agents to run browser automation**
 
-<a href="https://trendshift.io/repositories/42334?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-42334" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/42334" alt="citrolabs%2Fego-lite | Trendshift" width="250" height="55"/></a>
+<a href="https://github.com/mustbearnold/ego-lite-linux"><img src="https://img.shields.io/github/stars/mustbearnold/ego-lite-linux?style=for-the-badge&label=GitHub%20stars" alt="GitHub stars" width="250" height="55"/></a>
 
 <p>
   <a href="https://cdn.ego.app/channel/github_github_referral/setup/macos/arm64/egolite.dmg"><img src="https://img.shields.io/badge/Download-Apple%20Silicon-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download for Apple Silicon" /></a>
@@ -59,7 +59,7 @@ For a self-contained desktop package with embedded Chromium, run `npm install` a
 Install just the `ego-browser` skill:
 
 ```bash
-npx skills add citrolabs/ego-lite
+npx skills add mustbearnold/ego-lite-linux
 ```
 
 On macOS, the first time your agent runs a browser task, it walks you through installing the ego lite app. On Linux, run the checkout installer above first.
@@ -69,7 +69,7 @@ On macOS, the first time your agent runs a browser task, it walks you through in
 Paste this into your agent:
 
 ```
-Set up ego lite for me: https://github.com/citrolabs/ego-lite
+Set up ego lite for me: https://github.com/mustbearnold/ego-lite-linux
 
 Read `skills/ego-browser/references/install.md` and follow the steps to install ego lite.
 ```
@@ -137,18 +137,8 @@ Tutorials, the full tool reference, and integration guides live at [lite.ego.app
 ## Community
 
 - [Discord](https://discord.gg/5eGZVvHbTq), questions, setup help, and skill sharing
-- [GitHub Discussions](https://github.com/citrolabs/ego-lite/discussions), ideas and longer threads
+- [GitHub Discussions](https://github.com/mustbearnold/ego-lite-linux/discussions), ideas and longer threads
 - [X/Twitter](https://x.com/ego_agent), updates and releases
-
-## Star History
-
-<a href="https://www.star-history.com/?repos=citrolabs%2Fego-lite&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=citrolabs/ego-lite&type=date&theme=dark&legend=top-left&sealed_token=REc3U13uyXA_SL88c2BU0N5DOPw40Uiufp-RaA8pQS-JIMVaaxcGBjHmFV3Vwn9GMMIiL5e40DXSqHNcDjtXItvqvpMr013AaU6OkphU5o60GjasXVoXTQRR4TkWQSCPrPIxmKHehNll1TAsdoQ8rD3wPyRaj-Z_iHXqDDWf9b0gSWHxkyYoMUj6yWxY" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=citrolabs/ego-lite&type=date&legend=top-left&sealed_token=REc3U13uyXA_SL88c2BU0N5DOPw40Uiufp-RaA8pQS-JIMVaaxcGBjHmFV3Vwn9GMMIiL5e40DXSqHNcDjtXItvqvpMr013AaU6OkphU5o60GjasXVoXTQRR4TkWQSCPrPIxmKHehNll1TAsdoQ8rD3wPyRaj-Z_iHXqDDWf9b0gSWHxkyYoMUj6yWxY" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=citrolabs/ego-lite&type=date&legend=top-left&sealed_token=REc3U13uyXA_SL88c2BU0N5DOPw40Uiufp-RaA8pQS-JIMVaaxcGBjHmFV3Vwn9GMMIiL5e40DXSqHNcDjtXItvqvpMr013AaU6OkphU5o60GjasXVoXTQRR4TkWQSCPrPIxmKHehNll1TAsdoQ8rD3wPyRaj-Z_iHXqDDWf9b0gSWHxkyYoMUj6yWxY" />
- </picture>
-</a>
 
 ## License
 

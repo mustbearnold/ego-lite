@@ -1,6 +1,6 @@
 # Contributing Guide
 
-Thanks for your interest in contributing to **ego-browser (ego-lite)**! This guide is aimed at developers who want to build on top of the project or submit patches upstream. It covers the architecture, local development workflow, code conventions, and PR process.
+Thanks for your interest in contributing to **ego-browser (ego-lite)**! This guide is aimed at developers who want to build on top of the project or submit patches to this repository. It covers the architecture, local development workflow, code conventions, and PR process.
 
 > For the project vision, see [`README.md`](./README.md). For the agent-facing runbook, see [`skills/ego-browser/SKILL.md`](./skills/ego-browser/SKILL.md) (or [`SKILL.zh.md`](./skills/ego-browser/SKILL.zh.md)). For repo-level guidance, see [`AGENTS.md`](./AGENTS.md).
 
@@ -25,7 +25,7 @@ Thanks for your interest in contributing to **ego-browser (ego-lite)**! This gui
 
 ## 1. What This Project Is
 
-`ego-browser` is a Chromium browser designed for collaboration between humans and AI agents. This repository (`ego-lite`) provides the **Node.js helper runtime** and **agent skill package** that run on top of that browser.
+`ego-browser` is a Chromium browser designed for collaboration between humans and AI agents. This repository (`ego-lite-linux`) provides the **Node.js helper runtime** and **agent skill package** that run on top of that browser.
 
 - **This repo does not ship the browser binary**; the browser must be installed separately.
 - Agents invoke the CLI by running `ego-browser nodejs <<'EOF' ... EOF` from inside the browser. Each heredoc runs in a fresh Node process with all helpers injected into scope.
@@ -36,7 +36,7 @@ Thanks for your interest in contributing to **ego-browser (ego-lite)**! This gui
 ## 2. Repository Layout
 
 ```
-ego-lite/
+ego-lite-linux/
 ├── package/ego-browser/        # The runnable npm package (TypeScript)
 │   ├── src/                    # Core source
 │   │   ├── index.ts            # SDK / CLI bootstrap
@@ -341,7 +341,7 @@ This repo strongly endorses the four principles below (see [`AGENTS.md`](./AGENT
 
 ## Feedback & Contact
 
-- Issues / discussions: <https://github.com/CitroLabs/ego-lite/issues>
+- Issues / discussions: <https://github.com/mustbearnold/ego-lite-linux/issues>
 - License: MIT © 2026 CitroLabs
 
 Issues, PRs, and new site learnings are all welcome — make ego-browser smarter with your next contribution.
