@@ -38,10 +38,16 @@ npm run package:linux
 
 `EGO_BROWSER_EXECUTABLE` selects Chromium/Chrome explicitly. `EGO_LITE_PROFILE_DIR` changes the persistent browser profile, and `EGO_LITE_STATE_PATH` changes task-space metadata. `EGO_LITE_HEADLESS=1` enables headless Chromium; `EGO_LITE_CHROMIUM_ARGS_JSON` accepts an extra JSON array of Chromium arguments.
 
-The default profile is separate from an existing Chrome profile. Linux Chrome password/cookie stores are encrypted and may be live-locked, so automatic profile migration is not attempted; sign in once in the ego lite Linux profile instead.
+The default profile is separate from an existing Chrome profile. To migrate portable browser data explicitly, close the source browser and run:
+
+```bash
+ego-lite --migrate-profile --from "$HOME/.config/google-chrome"
+```
+
+`--from` accepts a Chromium/Chrome/Brave user-data directory or a specific profile directory such as `.../Default`. The migration backs up replaced ego lite data, copies bookmarks, settings, extensions, local storage, and related browser databases, and transfers readable cookies through a temporary CDP session. Passwords are not copied because Chrome's encrypted keyring is separate and must not be transplanted blindly. If `--from` is omitted, the host auto-detects a single supported Chromium-family profile.
 
 ## Compatibility boundary
 
 The helper SDK, CDP transport, task-space ownership methods, screenshots, downloads, uploads, locators, and semantic refs are shared with the macOS runtime. Snapshots are rendered from Chromium's `Accessibility.getFullAXTree`, so they are compatible with the existing backend-node resolver but can differ in wording and coverage from the macOS app's custom snapshot engine.
 
-The Linux host forwards `Browser.grantPermissions`, `Browser.resetPermissions`, and `Browser.setPermission` through the task-space bridge. The standalone host scopes these commands to the active Chromium browser context. The Electron package applies them to the active `BrowserView` session through its authenticated bridge while task spaces use separate persistent sessions; a new empty task partition inherits cookies from the primary visible session, then remains isolated. Electron task views stay in the background until the user reveals one from the toolbar picker. Electron's public CDP endpoint does not expose browser-context creation. The visible Linux browser is stock Chromium/Electron rather than the upstream closed-source ego lite Chromium shell, so app-specific browser chrome and Chrome-data migration are outside this port.
+The Linux host forwards `Browser.grantPermissions`, `Browser.resetPermissions`, and `Browser.setPermission` through the task-space bridge. The standalone host scopes these commands to the active Chromium browser context. The Electron package applies them to the active `BrowserView` session through its authenticated bridge while task spaces use separate persistent sessions; a new empty task partition inherits cookies from the primary visible session, then remains isolated. Electron task views stay in the background until the user reveals one from the toolbar picker. Electron's public CDP endpoint does not expose browser-context creation. The visible Linux browser is stock Chromium/Electron rather than the upstream closed-source ego lite Chromium shell, so app-specific browser chrome and the macOS custom snapshot engine remain outside this port.

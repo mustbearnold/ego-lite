@@ -74,7 +74,7 @@ Set up ego lite for me: https://github.com/mustbearnold/ego-lite-linux
 Read `skills/ego-browser/references/install.md` and follow the steps to install ego lite.
 ```
 
-On first macOS launch, ego lite asks whether to migrate your Chrome data. The Linux host uses its own persistent Chromium profile under `~/.local/share/ego-lite/chromium-profile`; log in there once before asking an agent to automate a site.
+On first macOS launch, ego lite asks whether to migrate your Chrome data. The Linux host uses its own persistent Chromium profile under `~/.local/share/ego-lite/chromium-profile`; run `ego-lite --migrate-profile --from "$HOME/.config/google-chrome"` before first use if you want to bring across portable browser data and cookies, then log in there once for anything not migrated.
 
 ### 2. Run your first task
 

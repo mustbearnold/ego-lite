@@ -50,4 +50,12 @@ The background-Space probe verifies that creating a task tab leaves the primary 
 npm run test:background-space
 ```
 
+The profile-migration probe verifies explicit Chrome-data migration, backup creation, and cookie transfer:
+
+```bash
+npm run test:profile-migration
+```
+
+The packaged CLI exposes the same migration command as the standalone host, for example `ego-lite --cli --migrate-profile --from "$HOME/.config/google-chrome"`. Close the source browser first; passwords are intentionally not imported.
+
 Do not run the Electron package and the standalone Linux host against the same profile at the same time. Set `EGO_LITE_PROFILE_DIR` to use a separate profile.

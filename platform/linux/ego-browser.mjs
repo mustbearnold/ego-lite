@@ -1,10 +1,20 @@
 #!/usr/bin/env node
 
-import { access, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import {
+  access,
+  cp,
+  mkdir,
+  open,
+  readFile,
+  rename,
+  readlink,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { constants, existsSync, realpathSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HOST_DIR = dirname(fileURLToPath(import.meta.url));
@@ -20,8 +30,75 @@ const DEFAULT_STATE_PATH = join(
   "ego-lite",
   "task-spaces.json",
 );
-const HOST_VERSION = "linux-host/0.3.0";
+const HOST_VERSION = "linux-host/0.4.0";
 const nativeFetch = globalThis.fetch?.bind(globalThis);
+const DEFAULT_EXECUTABLES = [
+  "chromium",
+  "chromium-browser",
+  "google-chrome",
+  "google-chrome-stable",
+];
+const MIGRATABLE_PROFILE_FILES = [
+  "Bookmarks",
+  "Bookmarks.bak",
+  "Preferences",
+  "Secure Preferences",
+  "Favicons",
+  "Favicons-journal",
+  "History",
+  "History-journal",
+  "Top Sites",
+  "Top Sites-journal",
+  "Web Data",
+  "Web Data-journal",
+];
+const MIGRATABLE_PROFILE_DIRECTORIES = [
+  "Extensions",
+  "Extension State",
+  "IndexedDB",
+  "Local Storage",
+  "Session Storage",
+  "Web Applications",
+];
+const MIGRATION_SOURCES = [
+  {
+    name: "Chromium",
+    userDataDir: join(
+      process.env.XDG_CONFIG_HOME || join(homedir(), ".config"),
+      "chromium",
+    ),
+    executableCandidates: DEFAULT_EXECUTABLES,
+  },
+  {
+    name: "Google Chrome",
+    userDataDir: join(
+      process.env.XDG_CONFIG_HOME || join(homedir(), ".config"),
+      "google-chrome",
+    ),
+    executableCandidates: [
+      "google-chrome",
+      "google-chrome-stable",
+      ...DEFAULT_EXECUTABLES,
+    ],
+  },
+  {
+    name: "Google Chrome Beta",
+    userDataDir: join(
+      process.env.XDG_CONFIG_HOME || join(homedir(), ".config"),
+      "google-chrome-beta",
+    ),
+    executableCandidates: ["google-chrome-beta", ...DEFAULT_EXECUTABLES],
+  },
+  {
+    name: "Brave",
+    userDataDir: join(
+      process.env.XDG_CONFIG_HOME || join(homedir(), ".config"),
+      "BraveSoftware",
+      "Brave-Browser",
+    ),
+    executableCandidates: ["brave-browser", ...DEFAULT_EXECUTABLES],
+  },
+];
 const CONTEXT_SCOPED_BROWSER_METHODS = new Set([
   "Browser.grantPermissions",
   "Browser.resetPermissions",
@@ -43,6 +120,7 @@ Commands:
   ego-browser --doctor
   ego-browser --launch
   ego-browser --reload
+  ego-browser --migrate-profile [--from PATH]
   ego-browser nodejs [--sdk-path PATH]
 
 Environment:
@@ -50,6 +128,12 @@ Environment:
   EGO_LITE_PROFILE_DIR         Persistent browser profile directory
   EGO_LITE_HEADLESS=1          Run Chromium headlessly (useful in CI)
   EGO_BROWSER_AGENT_WORKSPACE  Skill workspace used by the SDK
+
+Migration:
+  --migrate-profile imports bookmarks, browser settings, extensions, local
+  storage, and readable cookies into the Linux profile. Close the source
+  browser first. Existing Linux profile data is backed up before replacement;
+  saved passwords are not copied across browser keyrings.
 `;
 
 function fail(message) {
@@ -360,7 +444,19 @@ class LinuxEgoHost {
   }
 
   async copyDefaultCookies(targetId) {
-    const cookies = await this.connection.request("Network.getAllCookies");
+    const targets = await this.allTargets();
+    const defaultTarget = targets.find(
+      (target) =>
+        target.type === "page" &&
+        target.browserContextId === this.defaultContextId,
+    );
+    if (!defaultTarget) return;
+    const sourceSessionId = await this.attachTarget(defaultTarget.targetId);
+    const cookies = await this.connection.request(
+      "Network.getAllCookies",
+      {},
+      sourceSessionId,
+    );
     if (!Array.isArray(cookies.cookies) || cookies.cookies.length === 0) return;
     const sessionId = await this.attachTarget(targetId);
     await this.connection.request(
@@ -990,12 +1086,384 @@ async function readElectronBridge(profileDir) {
   }
 }
 
-function findExecutable() {
+async function pathExists(path) {
+  try {
+    await access(path, constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function profileLooksUsable(profileDir) {
+  for (const name of ["Bookmarks", "Preferences", "History"]) {
+    if (await pathExists(join(profileDir, name))) return true;
+  }
+  return false;
+}
+
+async function sourceProfileFromUserData(source) {
+  const profileDir = join(source.userDataDir, "Default");
+  if (!(await profileLooksUsable(profileDir))) return null;
+  return {
+    name: source.name,
+    userDataDir: source.userDataDir,
+    profileDir,
+    profileName: "Default",
+    executableCandidates: source.executableCandidates,
+  };
+}
+
+async function resolveMigrationSource(sourcePath) {
+  if (sourcePath) {
+    const candidate = resolve(sourcePath);
+    if (await profileLooksUsable(candidate)) {
+      return {
+        name: "Selected browser",
+        userDataDir: dirname(candidate),
+        profileDir: candidate,
+        profileName: basename(candidate),
+        executableCandidates: DEFAULT_EXECUTABLES,
+      };
+    }
+    const defaultProfile = await sourceProfileFromUserData({
+      name: "Selected browser",
+      userDataDir: candidate,
+      executableCandidates: DEFAULT_EXECUTABLES,
+    });
+    if (defaultProfile) return defaultProfile;
+    fail(
+      `Chrome profile not found at ${candidate}; pass --from /path/to/Default or a browser user-data directory`,
+    );
+  }
+
+  const available = [];
+  for (const source of MIGRATION_SOURCES) {
+    const profile = await sourceProfileFromUserData(source);
+    if (profile) available.push(profile);
+  }
+  if (available.length === 0) {
+    fail(
+      "no Chromium, Chrome, Chrome Beta, or Brave Default profile was found; pass --from /path/to/Default",
+    );
+  }
+  if (available.length > 1) {
+    fail(
+      `multiple browser profiles found; choose one with --from: ${available
+        .map((profile) => profile.profileDir)
+        .join(", ")}`,
+    );
+  }
+  return available[0];
+}
+
+async function existingBrowserLock(userDataDir) {
+  const lockPath = join(userDataDir, "SingletonLock");
+  try {
+    const lockTarget = await readlink(lockPath);
+    const pidMatch = /-(\d+)$/.exec(lockTarget);
+    if (!pidMatch) return "SingletonLock";
+    try {
+      process.kill(Number(pidMatch[1]), 0);
+      return "SingletonLock";
+    } catch (error) {
+      if (error?.code === "EPERM") return "SingletonLock";
+      if (error?.code !== "ESRCH") throw error;
+      return null;
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  return null;
+}
+
+async function ensureProfileNotRunning(userDataDir, label) {
+  const lock = await existingBrowserLock(userDataDir);
+  if (lock) {
+    fail(
+      `close ${label} before migration; ${lock} is present in ${userDataDir}`,
+    );
+  }
+  const endpoint = await readDevToolsEndpoint(userDataDir);
+  if (endpoint && (await canConnect(endpoint))) {
+    fail(`close ${label} before migration; it is still exposing CDP`);
+  }
+}
+
+async function copyMigrationData(sourceProfileDir, targetProfileDir) {
+  const names = [
+    ...MIGRATABLE_PROFILE_FILES,
+    ...MIGRATABLE_PROFILE_DIRECTORIES,
+  ];
+  const sourceEntries = [];
+  for (const name of names) {
+    if (await pathExists(join(sourceProfileDir, name))) {
+      sourceEntries.push(name);
+    }
+  }
+  if (sourceEntries.length === 0) {
+    fail(`no portable browser data was found in ${sourceProfileDir}`);
+  }
+
+  await mkdir(targetProfileDir, { recursive: true });
+  const replacedEntries = [];
+  for (const name of sourceEntries) {
+    if (await pathExists(join(targetProfileDir, name)))
+      replacedEntries.push(name);
+  }
+
+  let backupDir = null;
+  if (replacedEntries.length > 0) {
+    backupDir = `${targetProfileDir}.ego-lite-backup-${Date.now()}`;
+    await mkdir(backupDir, { recursive: true });
+    for (const name of replacedEntries) {
+      await cp(join(targetProfileDir, name), join(backupDir, name), {
+        recursive: true,
+        force: true,
+      });
+    }
+  }
+
+  for (const name of sourceEntries) {
+    const targetPath = join(targetProfileDir, name);
+    if (await pathExists(targetPath)) {
+      await rm(targetPath, { recursive: true, force: true });
+    }
+    await cp(join(sourceProfileDir, name), targetPath, {
+      recursive: true,
+      force: true,
+    });
+  }
+
+  return { copied: sourceEntries, backupDir };
+}
+
+async function launchMigrationBrowser({
+  executable,
+  userDataDir,
+  profileName,
+  passwordStore,
+}) {
+  await mkdir(userDataDir, { recursive: true });
+  const args = [
+    "--remote-debugging-port=0",
+    "--remote-debugging-address=127.0.0.1",
+    "--remote-allow-origins=*",
+    `--user-data-dir=${userDataDir}`,
+    `--profile-directory=${profileName}`,
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-extensions",
+    "--disable-sync",
+    "--headless=new",
+    "--disable-gpu",
+    "--disable-dev-shm-usage",
+    "--noerrdialogs",
+  ];
+  if (passwordStore) args.push(`--password-store=${passwordStore}`);
+  if (process.getuid?.() === 0) args.push("--no-sandbox");
+
+  const logPath = join(userDataDir, "ego-lite-migration.log");
+  const logHandle = await open(logPath, "a");
+  const child = spawn(executable, args, {
+    stdio: ["ignore", logHandle, logHandle],
+    env: process.env,
+  });
+  await logHandle.close();
+
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    const endpoint = await readDevToolsEndpoint(userDataDir);
+    if (await canConnect(endpoint)) {
+      return {
+        child,
+        connection: await new BrowserConnection(endpoint.url).connect(),
+        logPath,
+      };
+    }
+    if (child.exitCode !== null) break;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+  }
+  await stopMigrationBrowser({ child, connection: null });
+  fail(`browser did not expose CDP during migration; see ${logPath}`);
+}
+
+async function stopMigrationBrowser(browser) {
+  await browser.connection?.request("Browser.close").catch(() => {});
+  browser.connection?.close();
+  const child = browser.child;
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  await new Promise((resolvePromise) => {
+    let settled = false;
+    let forceTimer;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(forceTimer);
+      resolvePromise();
+    };
+    const timer = setTimeout(() => {
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // The child may have exited between the timeout and kill call.
+      }
+      forceTimer = setTimeout(() => {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // The child may have exited between the timeout and kill call.
+        }
+        settle();
+      }, 2000);
+    }, 3000);
+    child.once("close", settle);
+  });
+}
+
+async function attachMigrationTarget(connection) {
+  const targets = await connection.request("Target.getTargets");
+  let target = (targets.targetInfos || []).find(
+    (candidate) => candidate.type === "page",
+  );
+  if (!target) {
+    const created = await connection.request("Target.createTarget", {
+      url: "about:blank",
+    });
+    target = { targetId: created.targetId };
+  }
+  const attached = await connection.request("Target.attachToTarget", {
+    targetId: target.targetId,
+    flatten: true,
+  });
+  return attached.sessionId;
+}
+
+function migrationCookieParams(cookies) {
+  return cookies.map((cookie) => {
+    const {
+      name,
+      value,
+      domain,
+      path,
+      expires,
+      httpOnly,
+      secure,
+      sameSite,
+      priority,
+      sourceScheme,
+      sourcePort,
+      partitionKey,
+    } = cookie;
+    return {
+      name,
+      value,
+      ...(domain ? { domain } : {}),
+      ...(path ? { path } : {}),
+      ...(Number.isFinite(expires) && expires > 0 ? { expires } : {}),
+      ...(httpOnly !== undefined ? { httpOnly } : {}),
+      ...(secure !== undefined ? { secure } : {}),
+      ...(sameSite ? { sameSite } : {}),
+      ...(priority ? { priority } : {}),
+      ...(sourceScheme ? { sourceScheme } : {}),
+      ...(sourcePort !== undefined ? { sourcePort } : {}),
+      ...(partitionKey ? { partitionKey } : {}),
+    };
+  });
+}
+
+async function exportMigrationCookies(source, executable) {
+  const browser = await launchMigrationBrowser({
+    executable,
+    userDataDir: source.userDataDir,
+    profileName: source.profileName,
+  });
+  try {
+    const sessionId = await attachMigrationTarget(browser.connection);
+    const result = await browser.connection.request(
+      "Network.getAllCookies",
+      {},
+      sessionId,
+    );
+    return migrationCookieParams(result.cookies || []);
+  } finally {
+    await stopMigrationBrowser(browser);
+  }
+}
+
+async function importMigrationCookies(targetUserDataDir, cookies, executable) {
+  if (cookies.length === 0) return { imported: 0, failed: 0 };
+  const browser = await launchMigrationBrowser({
+    executable,
+    userDataDir: targetUserDataDir,
+    profileName: "Default",
+    passwordStore: "basic",
+  });
+  let imported = 0;
+  let failed = 0;
+  try {
+    const sessionId = await attachMigrationTarget(browser.connection);
+    for (const cookie of cookies) {
+      try {
+        await browser.connection.request(
+          "Network.setCookies",
+          { cookies: [cookie] },
+          sessionId,
+        );
+        imported += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+  } finally {
+    await stopMigrationBrowser(browser);
+  }
+  return { imported, failed };
+}
+
+async function migrateProfile(sourcePath) {
+  const source = await resolveMigrationSource(sourcePath);
+  const targetUserDataDir = resolve(
+    process.env.EGO_LITE_PROFILE_DIR || DEFAULT_PROFILE_DIR,
+  );
+  const targetProfileDir = join(targetUserDataDir, "Default");
+  if (
+    source.userDataDir === targetUserDataDir ||
+    source.profileDir === targetProfileDir
+  ) {
+    fail("source browser profile and ego lite profile must be different");
+  }
+  await ensureProfileNotRunning(source.userDataDir, `${source.name} browser`);
+  await ensureProfileNotRunning(targetUserDataDir, "ego lite");
+
+  const executable = findExecutable(source.executableCandidates);
+  const copied = await copyMigrationData(source.profileDir, targetProfileDir);
+  const cookies = await exportMigrationCookies(source, executable);
+  const imported = await importMigrationCookies(
+    targetUserDataDir,
+    cookies,
+    executable,
+  );
+  return {
+    source: source.profileDir,
+    target: targetProfileDir,
+    browser: executable,
+    copied: copied.copied,
+    backupDir: copied.backupDir,
+    cookies: {
+      found: cookies.length,
+      imported: imported.imported,
+      failed: imported.failed,
+    },
+    passwords: "not imported; encrypted browser keyrings are kept separate",
+  };
+}
+
+function findExecutable(candidates = DEFAULT_EXECUTABLES) {
   const requested = process.env.EGO_BROWSER_EXECUTABLE;
-  const candidates = requested
-    ? [requested]
-    : ["chromium", "chromium-browser", "google-chrome", "google-chrome-stable"];
-  for (const candidate of candidates) {
+  const executableCandidates = requested ? [requested] : candidates;
+  for (const candidate of executableCandidates) {
     const result = spawnSync(
       "sh",
       ["-c", 'command -v "$1"', "ego-lite-find", candidate],
@@ -1137,6 +1605,7 @@ async function readStdin() {
 function parseArgs(argv) {
   const args = [...argv];
   let sdkPath;
+  let migrateFrom;
   let command = "run";
   if (args[0] === "nodejs") args.shift();
   for (let index = 0; index < args.length; index += 1) {
@@ -1150,17 +1619,22 @@ function parseArgs(argv) {
       command = "launch";
     } else if (arg === "--reload") {
       command = "reload";
+    } else if (arg === "--migrate-profile") {
+      command = "migrate-profile";
+    } else if (arg === "--from") {
+      migrateFrom = args[++index];
+      if (!migrateFrom) fail("--from requires a path");
     } else if (arg === "--help" || arg === "-h") {
       command = "help";
     } else {
       fail(`unknown argument: ${arg}`);
     }
   }
-  return { command, sdkPath };
+  return { command, sdkPath, migrateFrom };
 }
 
 export async function runHost(argv = process.argv.slice(2)) {
-  const { command, sdkPath } = parseArgs(argv);
+  const { command, sdkPath, migrateFrom } = parseArgs(argv);
   if (command === "help") {
     process.stdout.write(HELP);
     return 0;
@@ -1177,6 +1651,11 @@ export async function runHost(argv = process.argv.slice(2)) {
         "No running Linux browser connection found; the next command will launch Chromium.\n",
       );
     }
+    return 0;
+  }
+  if (command === "migrate-profile") {
+    const report = await migrateProfile(migrateFrom);
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     return 0;
   }
   const host = await connectToChromium();
