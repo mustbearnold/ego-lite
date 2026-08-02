@@ -190,6 +190,12 @@ The detached CLI profile probe verifies that `ego-lite --cli --profile work --do
 npm run test:profile-cli
 ```
 
+The headless standalone-host probe verifies that the open Linux Chromium host accepts the same profile and server namespaces and resolves their browser and task-Space paths without opening a window:
+
+```bash
+npm run test:standalone-profile
+```
+
 The migration-discovery probe verifies that all usable supported profiles are enumerated while the standalone single-profile helper refuses to guess when multiple profiles are available:
 
 ```bash

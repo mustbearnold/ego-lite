@@ -4,7 +4,7 @@ This directory contains the open Linux host for the `ego-browser` SDK. It launch
 
 The host is dependency-free beyond Node.js 22+. It uses Chromium browser contexts for task spaces, copies current browser cookies into a new agent context when possible, and persists task-space metadata under `~/.local/state/ego-lite/task-spaces.json`.
 
-Pass `--server-name NAME` or set `EGO_LITE_SERVER_NAME` to run or reconnect to a named browser instance. Named instances use matching `servers/NAME` namespaces under the XDG data and state roots, which lets multiple profiles and agents run without sharing CDP endpoint files.
+Pass `--profile NAME` or set `EGO_LITE_PROFILE_ID` to select a persistent browser profile. Pass `--server-name NAME` or set `EGO_LITE_SERVER_NAME` to run or reconnect to a named browser instance. Profile and named-instance namespaces compose, so `--profile work --server-name ci` uses separate `profiles/work` data below the `servers/ci` roots. The default profile and server keep the existing paths for backwards compatibility.
 
 ## Install
 
@@ -42,7 +42,7 @@ The checkout installer offers the same migration during an interactive first ins
 
 ## Runtime configuration
 
-`EGO_BROWSER_EXECUTABLE` selects Chromium/Chrome explicitly. `EGO_LITE_PROFILE_DIR` changes the persistent browser profile, and `EGO_LITE_STATE_PATH` changes task-space metadata. `EGO_LITE_HEADLESS=1` enables headless Chromium; `EGO_LITE_CHROMIUM_ARGS_JSON` accepts an extra JSON array of Chromium arguments.
+`EGO_BROWSER_EXECUTABLE` selects Chromium/Chrome explicitly. `EGO_LITE_PROFILE_ROOT` changes the root used for named Linux profiles, while `EGO_LITE_PROFILE_DIR` and `EGO_LITE_STATE_PATH` override the resolved browser profile and task-space metadata paths. `EGO_LITE_HEADLESS=1` enables headless Chromium; `EGO_LITE_CHROMIUM_ARGS_JSON` accepts an extra JSON array of Chromium arguments.
 
 The default profile is separate from an existing Chrome profile. To migrate portable browser data explicitly, close the source browser and run:
 
