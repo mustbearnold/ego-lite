@@ -58,7 +58,7 @@ npm run test:browser-sync-electron
 
 Use `--server-name NAME` or `EGO_LITE_SERVER_NAME` when more than one browser instance needs to run at once. Named instances use an isolated `servers/NAME` data, state, and bridge namespace; the default instance keeps the existing paths for backwards compatibility. Pass the same name to the packaged CLI to reconnect to the matching instance.
 
-Agent-created task tabs stay in the background by default, so creating or navigating a Space does not replace the user’s visible tab. Use the toolbar’s tab picker to inspect or reveal a Space explicitly.
+Agent-created task tabs stay in the background by default, so creating or navigating a Space does not replace the user’s visible tab. Use the Spaces menu’s Open action, the tab strip, or the retained tab picker to inspect or reveal a Space explicitly.
 
 If a user reveals a Space and submits a URL through the toolbar, the URL opens in a regular primary tab and leaves the Agent tab unchanged. Browser `target=_blank` and `window.open` requests create a new tab in the source tab’s scope; foreground primary requests activate their new user tab, while Agent-created tabs remain background.
 
@@ -134,7 +134,7 @@ The Electron task-space cookie inheritance probe runs under a disposable profile
 npm run test:cookie-parity
 ```
 
-The background-Space probe verifies that creating a task tab leaves the primary tab visible, that explicit reveal works, and that closing the task restores the primary tab:
+The background-Space probe verifies that creating a task tab leaves the primary tab visible, that explicit reveal works from the Spaces menu, and that closing the task restores the primary tab:
 
 ```bash
 npm run test:background-space

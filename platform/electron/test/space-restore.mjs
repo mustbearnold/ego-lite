@@ -319,6 +319,37 @@ try {
 
   const renderer = await connectRenderer();
   try {
+    const allRestoredTabs = await bridgeRequest(secondBridge, "/tabs");
+    const primaryTab = allRestoredTabs.tabs?.find((tab) => tab.spaceId === null);
+    if (!primaryTab) throw new Error("restored primary tab is missing");
+    await bridgeRequest(secondBridge, "/activate-tab", {
+      targetId: primaryTab.targetId,
+    });
+    await waitFor("primary control badge", async () => {
+      const value = await evaluate(
+        renderer.connection,
+        renderer.sessionId,
+        "document.querySelector('#control')?.textContent || ''",
+      );
+      return value === "Your tab" ? value : null;
+    });
+    await waitFor("Space open control", async () => {
+      const value = await evaluate(
+        renderer.connection,
+        renderer.sessionId,
+        "Boolean(document.querySelector('#space-list button[data-space-action=open]'))",
+      );
+      return value ? value : null;
+    });
+    await evaluate(
+      renderer.connection,
+      renderer.sessionId,
+      "document.querySelector('#space-list button[data-space-action=open]').click(); true",
+    );
+    const openedSpace = await waitFor("Space open action", async () => {
+      const result = await bridgeRequest(secondBridge, "/tabs");
+      return result.tabs?.find((tab) => tab.spaceId === 7 && tab.active) || null;
+    });
     const agentControl = await waitFor("agent control badge", async () => {
       const value = await evaluate(
         renderer.connection,
@@ -414,6 +445,7 @@ try {
         restoredUrls: restored.tabs.map((tab) => tab.url).sort(),
         sdk,
         controls: {
+          openedSpace: openedSpace.url,
           agentControl,
           spaceMenu,
           userControl,

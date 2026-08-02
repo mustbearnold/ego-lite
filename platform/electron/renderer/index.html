@@ -1094,7 +1094,7 @@
         }
       }
 
-      function applySpaces(spaces = []) {
+      function applySpaces(spaces = [], tabs = []) {
         spaceList.replaceChildren();
         spaceMenu.hidden = spaces.length === 0;
         for (const space of spaces) {
@@ -1108,6 +1108,30 @@
           label.textContent = `${space.name || `Space ${space.id}`} · ${space.ownership === "user" ? "user" : "agent"} · ${space.tabCount || 0} tab${space.tabCount === 1 ? "" : "s"}${taskState}`;
           label.title = space.taskState || "idle";
           row.append(label);
+
+          const spaceTabs = tabs.filter(
+            (tab) => Number(tab.spaceId) === Number(space.id),
+          );
+          const open = document.createElement("button");
+          open.type = "button";
+          open.dataset.spaceAction = "open";
+          open.textContent = "Open";
+          open.disabled = spaceTabs.length === 0;
+          open.setAttribute(
+            "aria-label",
+            `Open Space: ${space.name || `Space ${space.id}`}`,
+          );
+          open.addEventListener("click", async () => {
+            const target =
+              spaceTabs.find((tab) => tab.active) || spaceTabs[0];
+            if (!target) return;
+            try {
+              applyTabs(await window.egoLite.activateTab(target.targetId));
+            } catch (error) {
+              status.textContent = error.message;
+            }
+          });
+          row.append(open);
 
           const ownership = document.createElement("button");
           ownership.type = "button";
@@ -1448,7 +1472,7 @@
         applyBrowserSync(state.browserSync);
         applyExtensions(state.extensions);
         applyDownloads(state.downloads);
-        applySpaces(state.taskSpaces);
+        applySpaces(state.taskSpaces, state.tabs);
         applyUpdateState(state.updateState);
         applyTabs(state.tabs);
       }
