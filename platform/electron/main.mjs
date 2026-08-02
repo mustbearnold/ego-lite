@@ -4,6 +4,7 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  screen,
   session,
   shell,
 } from "electron";
@@ -44,7 +45,15 @@ const STATE_PATH = resolve(
       "task-spaces.json",
     ),
 );
+const WINDOW_STATE_PATH = resolve(
+  process.env.EGO_LITE_WINDOW_STATE_PATH ||
+    join(PROFILE_DIR, "ego-lite-window.json"),
+);
 const TOOLBAR_HEIGHT = 52;
+const WINDOW_MIN_WIDTH = 720;
+const WINDOW_MIN_HEIGHT = 480;
+const WINDOW_DEFAULT_WIDTH = 1440;
+const WINDOW_DEFAULT_HEIGHT = 900;
 const CLI_MODE = process.argv.includes("--cli");
 const CLI_PROFILE_MIGRATION =
   CLI_MODE && process.argv.includes("--migrate-profile");
@@ -76,6 +85,7 @@ const sessionExtensionLoads = new WeakMap();
 let bridgeServer;
 let bridgeToken;
 let browserStateSyncTimer;
+let windowStateSaveTimer;
 let updateController;
 const downloadStates = new Map();
 const downloadSessions = new WeakSet();
@@ -127,6 +137,114 @@ function normalizeUrl(value) {
     throw new Error(`unsupported browser URL scheme: ${url.protocol}`);
   }
   return url.toString();
+}
+
+function boundedWindowDimension(value, minimum, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(minimum, Math.round(number));
+}
+
+function windowPositionIsVisible({ x, y, width, height }) {
+  try {
+    return screen.getAllDisplays().some(({ workArea }) => {
+      const horizontalOverlap = Math.max(
+        0,
+        Math.min(x + width, workArea.x + workArea.width) -
+          Math.max(x, workArea.x),
+      );
+      const verticalOverlap = Math.max(
+        0,
+        Math.min(y + height, workArea.y + workArea.height) -
+          Math.max(y, workArea.y),
+      );
+      return horizontalOverlap >= 80 && verticalOverlap >= 80;
+    });
+  } catch {
+    return false;
+  }
+}
+
+function readWindowState() {
+  let stored;
+  try {
+    stored = JSON.parse(readFileSync(WINDOW_STATE_PATH, "utf8"));
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      console.warn(
+        `[ego-lite] could not read window state: ${error?.message || String(error)}`,
+      );
+    }
+    return null;
+  }
+  if (stored?.version !== 1) return null;
+
+  const state = {
+    width: boundedWindowDimension(
+      stored.width,
+      WINDOW_MIN_WIDTH,
+      WINDOW_DEFAULT_WIDTH,
+    ),
+    height: boundedWindowDimension(
+      stored.height,
+      WINDOW_MIN_HEIGHT,
+      WINDOW_DEFAULT_HEIGHT,
+    ),
+    maximized: Boolean(stored.maximized),
+  };
+  const x = Number(stored.x);
+  const y = Number(stored.y);
+  if (
+    Number.isFinite(x) &&
+    Number.isFinite(y) &&
+    windowPositionIsVisible({
+      x,
+      y,
+      width: state.width,
+      height: state.height,
+    })
+  ) {
+    state.x = Math.round(x);
+    state.y = Math.round(y);
+  }
+  return state;
+}
+
+function currentWindowState() {
+  if (!mainWindow || mainWindow.isDestroyed()) return null;
+  const bounds = mainWindow.getNormalBounds();
+  return {
+    version: 1,
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+    maximized: mainWindow.isMaximized(),
+  };
+}
+
+function saveWindowStateSync() {
+  const state = currentWindowState();
+  if (!state) return;
+  const temporaryPath = `${WINDOW_STATE_PATH}.${process.pid}.tmp`;
+  try {
+    mkdirSync(dirname(WINDOW_STATE_PATH), { recursive: true });
+    writeFileSync(temporaryPath, `${JSON.stringify(state, null, 2)}\n`);
+    renameSync(temporaryPath, WINDOW_STATE_PATH);
+  } catch (error) {
+    console.warn(
+      `[ego-lite] could not flush window state: ${error?.message || String(error)}`,
+    );
+  }
+}
+
+function scheduleWindowStateSave() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (windowStateSaveTimer) clearTimeout(windowStateSaveTimer);
+  windowStateSaveTimer = setTimeout(() => {
+    windowStateSaveTimer = undefined;
+    saveWindowStateSync();
+  }, 100);
 }
 
 function managedTabState() {
@@ -1293,13 +1411,16 @@ async function createWindow() {
   const migrated = await readMigratedTabsManifest();
   const persisted = migrated ? null : await readPrimarySessionManifest();
   const persistedSpaces = await readSpaceSessionManifest();
+  const windowState = readWindowState();
   const stored = migrated || persisted;
   const restoredTabs = stored?.tabs || [];
   mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    minWidth: 720,
-    minHeight: 480,
+    width: windowState?.width || WINDOW_DEFAULT_WIDTH,
+    height: windowState?.height || WINDOW_DEFAULT_HEIGHT,
+    ...(windowState?.x !== undefined ? { x: windowState.x } : {}),
+    ...(windowState?.y !== undefined ? { y: windowState.y } : {}),
+    minWidth: WINDOW_MIN_WIDTH,
+    minHeight: WINDOW_MIN_HEIGHT,
     title: "ego lite",
     backgroundColor: "#111827",
     webPreferences: {
@@ -1311,6 +1432,7 @@ async function createWindow() {
       preload: join(MAIN_DIR, "preload.mjs"),
     },
   });
+  if (windowState?.maximized) mainWindow.maximize();
 
   const firstTab = restoredTabs[0] || {
     url: "about:blank",
@@ -1337,8 +1459,17 @@ async function createWindow() {
   browserView = restoredViews[0].view;
   mainWindow.setBrowserView(browserView);
   resizeBrowserView();
-  mainWindow.on("resize", resizeBrowserView);
+  mainWindow.on("resize", () => {
+    resizeBrowserView();
+    scheduleWindowStateSave();
+  });
+  mainWindow.on("move", scheduleWindowStateSave);
+  mainWindow.on("maximize", scheduleWindowStateSave);
+  mainWindow.on("unmaximize", scheduleWindowStateSave);
+  mainWindow.on("close", saveWindowStateSync);
   mainWindow.on("closed", () => {
+    if (windowStateSaveTimer) clearTimeout(windowStateSaveTimer);
+    windowStateSaveTimer = undefined;
     browserView = null;
     mainWindow = null;
   });
@@ -1693,7 +1824,10 @@ if (!hasSingleInstance) {
   app.on("before-quit", () => {
     if (sessionSaveTimer) clearTimeout(sessionSaveTimer);
     if (spaceSaveTimer) clearTimeout(spaceSaveTimer);
+    if (windowStateSaveTimer) clearTimeout(windowStateSaveTimer);
+    windowStateSaveTimer = undefined;
     if (browserStateSyncTimer) clearInterval(browserStateSyncTimer);
+    saveWindowStateSync();
     savePrimarySessionSync();
     saveSpaceSessionSync();
     bridgeServer?.close();

@@ -48,6 +48,12 @@ The toolbar exposes bookmarks imported into the Electron profile and a Private t
 
 User downloads appear in the toolbar’s Downloads menu with progress and a Show action. Primary-tab downloads use `EGO_LITE_DOWNLOAD_DIR` when set, otherwise the normal `~/Downloads` directory; task-Space downloads retain the SDK/CDP-selected download path.
 
+The native window restores its last usable position and size, keeps the normal bounds behind a maximized session, and restores maximized state on the next launch. The detached X11/Xvfb probe covers seed, resize, quit, and restart restoration:
+
+```bash
+npm run test:window-state
+```
+
 The Spaces menu lists active agent workspaces and exposes Take over/Return control plus Stop actions; stopping a Space closes its task tabs and removes its persisted task state.
 
 The Electron toolbar also provides New tab and Close tab controls, with Ctrl/Cmd+T and Ctrl/Cmd+W shortcuts from either the toolbar or the focused page; closing the final primary tab keeps one blank replacement tab available.
