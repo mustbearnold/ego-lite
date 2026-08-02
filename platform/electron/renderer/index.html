@@ -88,6 +88,27 @@
         position: relative;
       }
 
+      #bookmark-menu {
+        position: relative;
+      }
+
+      #bookmark-menu summary {
+        background: #1f2937;
+        border: 1px solid #4b5563;
+        border-radius: 6px;
+        color: #e5e7eb;
+        cursor: pointer;
+        font-size: 13px;
+        height: 34px;
+        list-style: none;
+        padding: 8px 10px;
+        white-space: nowrap;
+      }
+
+      #bookmark-menu summary::-webkit-details-marker {
+        display: none;
+      }
+
       #group-menu summary {
         background: #1f2937;
         border: 1px solid #4b5563;
@@ -185,6 +206,31 @@
         width: 100%;
       }
 
+      #bookmark-list {
+        background: #1f2937;
+        border: 1px solid #4b5563;
+        border-radius: 6px;
+        display: grid;
+        gap: 4px;
+        min-width: 260px;
+        max-height: min(520px, calc(100vh - 72px));
+        overflow: auto;
+        padding: 6px;
+        position: absolute;
+        right: 0;
+        top: 40px;
+        z-index: 10;
+      }
+
+      #bookmark-list button {
+        font-size: 12px;
+        overflow: hidden;
+        text-align: left;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        width: 100%;
+      }
+
       #status {
         color: #9ca3af;
         font-size: 12px;
@@ -256,12 +302,24 @@
       <button id="new-tab" type="button" title="New tab" aria-label="New tab">
         +
       </button>
+      <button
+        id="new-private-tab"
+        type="button"
+        title="New private tab"
+        aria-label="New private tab"
+      >
+        Private
+      </button>
       <button id="close-tab" type="button" title="Close tab" aria-label="Close tab">
         ×
       </button>
       <button id="import-data" type="button" title="Import browser data">
         Import
       </button>
+      <details id="bookmark-menu" hidden>
+        <summary>Bookmarks</summary>
+        <div id="bookmark-list" role="menu"></div>
+      </details>
       <select id="tab-picker" aria-label="Open tab"></select>
       <details id="space-menu" hidden>
         <summary>Spaces</summary>
@@ -281,8 +339,11 @@
       const back = document.querySelector("#back");
       const forward = document.querySelector("#forward");
       const newTab = document.querySelector("#new-tab");
+      const newPrivateTab = document.querySelector("#new-private-tab");
       const closeTab = document.querySelector("#close-tab");
       const importData = document.querySelector("#import-data");
+      const bookmarkMenu = document.querySelector("#bookmark-menu");
+      const bookmarkList = document.querySelector("#bookmark-list");
       const tabPicker = document.querySelector("#tab-picker");
       const spaceMenu = document.querySelector("#space-menu");
       const spaceList = document.querySelector("#space-list");
@@ -294,10 +355,39 @@
       function tabLabel(tab) {
         const space =
           tab.spaceId === null
-            ? "Your tab"
+            ? tab.private
+              ? "Private tab"
+              : "Your tab"
             : tab.spaceName || `Space ${tab.spaceId}`;
         const location = tab.title || tab.url || "New tab";
         return `${space} — ${location}`;
+      }
+
+      function applyBookmarks(bookmarks = []) {
+        bookmarkList.replaceChildren();
+        bookmarkMenu.hidden = bookmarks.length === 0;
+        for (const bookmark of bookmarks) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.dataset.bookmarkUrl = bookmark.url;
+          button.setAttribute(
+            "aria-label",
+            bookmark.folder ? `${bookmark.name} · ${bookmark.folder}` : bookmark.name,
+          );
+          button.title = bookmark.url;
+          button.textContent = bookmark.folder
+            ? `${bookmark.name} · ${bookmark.folder}`
+            : bookmark.name;
+          button.addEventListener("click", async () => {
+            try {
+              await window.egoLite.navigate(bookmark.url);
+              bookmarkMenu.open = false;
+            } catch (error) {
+              status.textContent = error.message;
+            }
+          });
+          bookmarkList.append(button);
+        }
       }
 
       function applySpaces(spaces = []) {
@@ -436,6 +526,7 @@
         control.dataset.ownership = controlState.ownership || "user";
         back.disabled = !state.canGoBack;
         forward.disabled = !state.canGoForward;
+        applyBookmarks(state.bookmarks);
         applySpaces(state.taskSpaces);
         applyUpdateState(state.updateState);
         applyTabs(state.tabs);
@@ -456,6 +547,13 @@
       newTab.addEventListener("click", async () => {
         try {
           applyTabs(await window.egoLite.newTab());
+        } catch (error) {
+          status.textContent = error.message;
+        }
+      });
+      newPrivateTab.addEventListener("click", async () => {
+        try {
+          applyTabs(await window.egoLite.newPrivateTab());
         } catch (error) {
           status.textContent = error.message;
         }
@@ -494,7 +592,10 @@
       });
       window.addEventListener("keydown", (event) => {
         if (!(event.metaKey || event.ctrlKey)) return;
-        if (event.key.toLowerCase() === "t") {
+        if (event.shiftKey && event.key.toLowerCase() === "n") {
+          event.preventDefault();
+          newPrivateTab.click();
+        } else if (event.key.toLowerCase() === "t") {
           event.preventDefault();
           newTab.click();
         } else if (event.key.toLowerCase() === "w") {

@@ -20,6 +20,7 @@
     "build:sdk": "npm --prefix ../../package/ego-browser run build",
     "start": "electron .",
     "test:agent-visuals": "xvfb-run --auto-servernum node test/agent-visuals.mjs",
+    "test:bookmarks": "node test/bookmarks.mjs",
     "test:background-space": "xvfb-run --auto-servernum node test/background-space.mjs",
     "test:cookie-parity": "npm run build:sdk && xvfb-run --auto-servernum node test/cookie-inheritance.mjs",
     "test:extension-loading": "xvfb-run --auto-servernum node test/extension-loading.mjs",
@@ -29,6 +30,7 @@
     "test:migration-prompt:multi": "xvfb-run --auto-servernum env EGO_LITE_TEST_MULTI_PROFILE=1 EGO_LITE_TEST_MIGRATION_CHOICE=migrate node test/migration-prompt.mjs",
     "test:migrated-tabs": "xvfb-run --auto-servernum node test/migrated-tabs.mjs",
     "test:password-migration": "node test/password-migration.mjs",
+    "test:private-tabs": "xvfb-run --auto-servernum node test/private-tab-controls.mjs",
     "test:session-restore": "xvfb-run --auto-servernum node test/session-restore.mjs",
     "test:profile-migration": "node test/profile-migration.mjs",
     "test:profile-migration:electron": "xvfb-run --auto-servernum env EGO_LITE_ELECTRON_MIGRATION=1 node test/profile-migration.mjs",
@@ -53,6 +55,7 @@
     "asar": true,
     "files": [
       "main.mjs",
+      "bookmarks.mjs",
       "migration-discovery.mjs",
       "preload.mjs",
       "update.mjs",

@@ -23,6 +23,7 @@ import {
   findMigrationProfiles,
   profileLooksUsable,
 } from "./migration-discovery.mjs";
+import { readBookmarks } from "./bookmarks.mjs";
 import { createUpdateController } from "./update.mjs";
 
 const MAIN_DIR = dirname(fileURLToPath(import.meta.url));
@@ -82,6 +83,7 @@ let updateState = {
   percent: null,
   message: null,
 };
+let bookmarks = [];
 let agentTaskState = null;
 const bridgeFile = join(PROFILE_DIR, "ego-lite-bridge.json");
 const MIGRATION_PROMPT_MARKER = join(PROFILE_DIR, ".migration-prompted");
@@ -126,6 +128,7 @@ function managedTabState() {
     targetId,
     spaceId: managed.spaceId,
     spaceName: managed.spaceName || null,
+    private: Boolean(managed.private),
     url: managed.view.webContents.getURL() || "about:blank",
     title: managed.view.webContents.getTitle() || "",
     tabGroup: managed.tabGroup || null,
@@ -193,6 +196,7 @@ function currentBrowserState() {
     url: browserView?.webContents.getURL() || "about:blank",
     agentTaskState,
     controlState: currentControlState(),
+    bookmarks,
     taskSpaces: currentTaskSpaces(),
     updateState: { ...updateState },
     canGoBack: browserView?.webContents.navigationHistory.canGoBack() || false,
@@ -222,8 +226,13 @@ function primaryManagedViews() {
   );
 }
 
+function persistentPrimaryManagedViews() {
+  return primaryManagedViews().filter(([, managed]) => !managed.private);
+}
+
 function primarySessionManifest() {
-  const tabs = primaryManagedViews()
+  const persistentTabs = persistentPrimaryManagedViews();
+  const tabs = persistentTabs
     .map(([targetId, managed], index) => {
       const url = sessionTabUrl(managed.view.webContents.getURL());
       if (!url) return null;
@@ -237,7 +246,7 @@ function primarySessionManifest() {
     })
     .filter(Boolean);
   const groups = new Map();
-  for (const [, managed] of primaryManagedViews()) {
+  for (const [, managed] of persistentTabs) {
     const group = managed.tabGroup;
     if (!group || groups.has(group.id)) continue;
     groups.set(group.id, {
@@ -413,8 +422,18 @@ function installViewListeners(view) {
   }
   view.webContents.on("before-input-event", (event, input) => {
     if (input.type !== "keyDown" || input.isAutoRepeat) return;
-    if (input.alt || input.shift || !(input.control || input.meta)) return;
+    if (input.alt || !(input.control || input.meta)) return;
     const key = String(input.key || "").toLowerCase();
+    if (input.shift && key === "n") {
+      event.preventDefault();
+      void createUserTab({ privateMode: true }).catch((error) => {
+        console.error(
+          `[ego-lite] could not create private shortcut tab: ${error?.message || String(error)}`,
+        );
+      });
+      return;
+    }
+    if (input.shift) return;
     if (key === "t") {
       event.preventDefault();
       void createUserTab().catch((error) => {
@@ -654,7 +673,13 @@ function applyPermissionCommand({ targetId, method, params = {} }) {
 
 async function registerManagedView(
   view,
-  { spaceId = null, spaceName = null, tabId = null, tabGroup = null } = {},
+  {
+    spaceId = null,
+    spaceName = null,
+    tabId = null,
+    tabGroup = null,
+    privateMode = false,
+  } = {},
 ) {
   installViewListeners(view);
   installPermissionHandlers(view.webContents.session);
@@ -665,6 +690,7 @@ async function registerManagedView(
     spaceName,
     tabId,
     tabGroup,
+    private: privateMode,
   });
   publishBrowserState();
   return targetId;
@@ -731,10 +757,11 @@ async function closeManagedView(targetId) {
   return { closed: true };
 }
 
-async function createUserTab() {
+async function createUserTab({ privateMode = false } = {}) {
   const primary = await createPrimaryBrowserView({
     url: "about:blank",
     tabId: `user-${randomUUID()}`,
+    privateMode,
   });
   setActiveBrowserView(primary.view);
   return managedTabState();
@@ -1125,12 +1152,17 @@ async function createPrimaryBrowserView({
   url = "about:blank",
   tabId = null,
   tabGroup = null,
+  privateMode = false,
 } = {}) {
+  const webPreferences = {
+    contextIsolation: true,
+    nodeIntegration: false,
+    ...(privateMode
+      ? { partition: `temp:ego-lite-private-${randomUUID()}` }
+      : {}),
+  };
   const view = new BrowserView({
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
+    webPreferences,
   });
   enableAccessibility(view);
   view.webContents.setWindowOpenHandler(({ url: openedUrl }) => {
@@ -1139,7 +1171,7 @@ async function createPrimaryBrowserView({
     });
     return { action: "deny" };
   });
-  await loadMigratedExtensions(view.webContents.session);
+  if (!privateMode) await loadMigratedExtensions(view.webContents.session);
   try {
     await view.webContents.loadURL(normalizeUrl(url));
   } catch (error) {
@@ -1151,11 +1183,13 @@ async function createPrimaryBrowserView({
   const targetId = await registerManagedView(view, {
     tabId,
     tabGroup,
+    privateMode,
   });
   return { view, targetId };
 }
 
 async function createWindow() {
+  bookmarks = readBookmarks(join(PROFILE_DIR, "Default", "Bookmarks"));
   const migrated = await readMigratedTabsManifest();
   const persisted = migrated ? null : await readPrimarySessionManifest();
   const persistedSpaces = await readSpaceSessionManifest();
@@ -1480,6 +1514,9 @@ ipcMain.handle("ego-lite:set-tab-group", (_event, value) =>
   updateTabGroup(value || {}),
 );
 ipcMain.handle("ego-lite:new-tab", () => createUserTab());
+ipcMain.handle("ego-lite:new-private-tab", () =>
+  createUserTab({ privateMode: true }),
+);
 ipcMain.handle("ego-lite:close-tab", () => closeActiveTab());
 ipcMain.handle("ego-lite:set-space-ownership", (_event, value) =>
   setTaskSpaceOwnership(value || {}),

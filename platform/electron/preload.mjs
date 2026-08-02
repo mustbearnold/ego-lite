@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld("egoLite", {
   importData: () => ipcRenderer.invoke("ego-lite:import-data"),
   setTabGroup: (value) => ipcRenderer.invoke("ego-lite:set-tab-group", value),
   newTab: () => ipcRenderer.invoke("ego-lite:new-tab"),
+  newPrivateTab: () => ipcRenderer.invoke("ego-lite:new-private-tab"),
   closeTab: () => ipcRenderer.invoke("ego-lite:close-tab"),
   setSpaceOwnership: (value) =>
     ipcRenderer.invoke("ego-lite:set-space-ownership", value),
