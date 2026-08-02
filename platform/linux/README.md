@@ -60,4 +60,6 @@ The Linux host forwards `Browser.grantPermissions`, `Browser.resetPermissions`, 
 
 The Electron toolbar also exposes imported Chromium bookmarks and supports non-persistent private tabs. Private tabs use a temporary Chromium partition, do not inherit primary-session cookies, and are omitted from primary-tab restoration.
 
+Primary-tab downloads are tracked in the Electron toolbar and saved under `EGO_LITE_DOWNLOAD_DIR` when configured, or the normal user Downloads directory. Agent task-Space downloads continue to use the SDK/CDP download path.
+
 When using Electron, SDK pointer labels are reflected in the toolbar, the live control badge follows Space handoff/takeover ownership, and labeled coordinates receive a transient page-local highlight. The standalone Chromium host keeps the browser interaction contract but has no ego lite toolbar surface for that status display.

@@ -5,6 +5,7 @@ import {
   dialog,
   ipcMain,
   session,
+  shell,
 } from "electron";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import {
@@ -16,7 +17,7 @@ import {
 } from "node:fs/promises";
 import { createServer } from "node:http";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import {
@@ -76,6 +77,11 @@ let bridgeServer;
 let bridgeToken;
 let browserStateSyncTimer;
 let updateController;
+const downloadStates = new Map();
+const downloadSessions = new WeakSet();
+const DOWNLOAD_DIR = resolve(
+  process.env.EGO_LITE_DOWNLOAD_DIR || join(homedir(), "Downloads"),
+);
 let updateState = {
   status: "disabled",
   currentVersion: app.getVersion(),
@@ -134,6 +140,80 @@ function managedTabState() {
     tabGroup: managed.tabGroup || null,
     active: managed.view === browserView,
   }));
+}
+
+function currentDownloads() {
+  return [...downloadStates.values()]
+    .slice(-20)
+    .reverse()
+    .map((download) => ({ ...download }));
+}
+
+function nonNegativeNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+function downloadProgress(item) {
+  const receivedBytes = nonNegativeNumber(item.getReceivedBytes());
+  const totalBytes = nonNegativeNumber(item.getTotalBytes());
+  const percent =
+    receivedBytes !== null && totalBytes > 0
+      ? Math.max(
+          0,
+          Math.min(100, Math.round((receivedBytes / totalBytes) * 100)),
+        )
+      : null;
+  return { receivedBytes, totalBytes, percent };
+}
+
+function installDownloadHandlers(webSession) {
+  if (downloadSessions.has(webSession)) return;
+  downloadSessions.add(webSession);
+  webSession.on("will-download", (_event, item, webContents) => {
+    const managed = [...managedViews.values()].find(
+      (candidate) => candidate.view.webContents === webContents,
+    );
+    const id = randomUUID();
+    const filename = basename(item.getFilename() || "download") || "download";
+    const download = {
+      id,
+      filename,
+      url: item.getURL() || "",
+      state: "progressing",
+      ...downloadProgress(item),
+      path: null,
+      spaceId: managed?.spaceId ?? null,
+      spaceName: managed?.spaceName || null,
+      private: Boolean(managed?.private),
+    };
+    downloadStates.set(id, download);
+    while (downloadStates.size > 20) {
+      const oldest = downloadStates.keys().next().value;
+      if (!oldest) break;
+      downloadStates.delete(oldest);
+    }
+
+    if (managed?.spaceId === null || !managed) {
+      mkdirSync(DOWNLOAD_DIR, { recursive: true });
+      if (!item.getSavePath()) item.setSavePath(join(DOWNLOAD_DIR, filename));
+    }
+
+    const publishDownload = (state) => {
+      const current = downloadStates.get(id);
+      if (!current) return;
+      downloadStates.set(id, {
+        ...current,
+        state,
+        ...downloadProgress(item),
+        path: item.getSavePath() || current.path,
+      });
+      publishBrowserState();
+    };
+    item.on("updated", (_event, state) => publishDownload(state));
+    item.once("done", (_event, state) => publishDownload(state));
+    publishBrowserState();
+  });
 }
 
 function readTaskSpaceState() {
@@ -197,6 +277,7 @@ function currentBrowserState() {
     agentTaskState,
     controlState: currentControlState(),
     bookmarks,
+    downloads: currentDownloads(),
     taskSpaces: currentTaskSpaces(),
     updateState: { ...updateState },
     canGoBack: browserView?.webContents.navigationHistory.canGoBack() || false,
@@ -683,6 +764,7 @@ async function registerManagedView(
 ) {
   installViewListeners(view);
   installPermissionHandlers(view.webContents.session);
+  installDownloadHandlers(view.webContents.session);
   const targetId = await targetIdForView(view);
   managedViews.set(targetId, {
     view,
@@ -714,6 +796,7 @@ async function createManagedView({
     },
   });
   enableAccessibility(view);
+  installDownloadHandlers(view.webContents.session);
   await loadMigratedExtensions(view.webContents.session);
   await inheritPrimaryCookies(view.webContents.session);
   view.webContents.setWindowOpenHandler(({ url: openedUrl }) => {
@@ -1165,6 +1248,7 @@ async function createPrimaryBrowserView({
     webPreferences,
   });
   enableAccessibility(view);
+  installDownloadHandlers(view.webContents.session);
   view.webContents.setWindowOpenHandler(({ url: openedUrl }) => {
     void navigateOnView(view, openedUrl).catch((error) => {
       console.error(`[ego-lite] cannot open ${openedUrl}: ${error.message}`);
@@ -1510,6 +1594,12 @@ ipcMain.handle("ego-lite:forward", () => {
 });
 ipcMain.handle("ego-lite:reload", () => browserView?.webContents.reload());
 ipcMain.handle("ego-lite:import-data", () => requestProfileImport());
+ipcMain.handle("ego-lite:show-download", (_event, id) => {
+  const download = downloadStates.get(String(id));
+  if (!download?.path) throw new Error("download is not ready");
+  shell.showItemInFolder(download.path);
+  return { shown: true };
+});
 ipcMain.handle("ego-lite:set-tab-group", (_event, value) =>
   updateTabGroup(value || {}),
 );

@@ -91,6 +91,7 @@ function startElectron() {
       EGO_LITE_DISABLE_GPU: "1",
       EGO_LITE_SKIP_MIGRATION: "1",
       EGO_LITE_DISABLE_AUTO_UPDATE: "1",
+      EGO_LITE_DOWNLOAD_DIR: join(profileDir, "downloads"),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -174,11 +175,22 @@ async function currentTabs(bridge) {
 
 try {
   server = createServer((request, response) => {
+    if (request.url === "/download") {
+      response.setHeader("content-type", "text/plain");
+      response.setHeader(
+        "content-disposition",
+        'attachment; filename="fixture.txt"',
+      );
+      response.end("download fixture\n");
+      return;
+    }
     if (request.url === "/set") {
       response.setHeader("set-cookie", "ego_primary=1; Path=/");
     }
     response.setHeader("content-type", "text/html");
-    response.end("<!doctype html><title>private tab fixture</title>");
+    response.end(
+      "<!doctype html><title>private tab fixture</title><a id=download href=/download>download</a>",
+    );
   });
   await new Promise((resolvePromise) =>
     server.listen(0, "127.0.0.1", resolvePromise),
@@ -254,6 +266,33 @@ try {
       return cookies.includes("ego_primary=1") ? tab : null;
     });
 
+    await evaluateTarget(
+      connection,
+      primary.targetId,
+      "document.querySelector('#download').click(); true",
+    );
+    const downloadFeatures = await waitFor("download toolbar", async () => {
+      const value = await evaluate(
+        connection,
+        attached.sessionId,
+        "(() => ({visible: !document.querySelector('#download-menu').hidden, labels: [...document.querySelectorAll('#download-list .download-row > span')].map((node) => node.textContent)}))()",
+      );
+      return value?.labels?.some((label) =>
+        /fixture\.txt · completed/.test(label),
+      )
+        ? value
+        : null;
+    });
+    const downloaded = await readFile(
+      join(profileDir, "downloads", "fixture.txt"),
+      "utf8",
+    );
+    if (downloaded !== "download fixture\n") {
+      throw new Error(
+        `download contents mismatch: ${JSON.stringify(downloaded)}`,
+      );
+    }
+
     await evaluate(
       connection,
       attached.sessionId,
@@ -319,6 +358,7 @@ try {
         privateTargetId: privateTab.targetId,
         privateCookie: privateCookie.cookies,
         toolbarFeatures,
+        downloadFeatures,
         persistentOnly: persistentOnly.map((tab) => ({
           private: tab.private,
           url: tab.url,

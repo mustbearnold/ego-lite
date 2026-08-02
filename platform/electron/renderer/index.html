@@ -231,6 +231,65 @@
         width: 100%;
       }
 
+      #download-menu {
+        position: relative;
+      }
+
+      #download-menu summary {
+        background: #1f2937;
+        border: 1px solid #4b5563;
+        border-radius: 6px;
+        color: #e5e7eb;
+        cursor: pointer;
+        font-size: 13px;
+        height: 34px;
+        list-style: none;
+        padding: 8px 10px;
+        white-space: nowrap;
+      }
+
+      #download-menu summary::-webkit-details-marker {
+        display: none;
+      }
+
+      #download-list {
+        background: #1f2937;
+        border: 1px solid #4b5563;
+        border-radius: 6px;
+        display: grid;
+        gap: 6px;
+        min-width: 300px;
+        max-height: min(520px, calc(100vh - 72px));
+        overflow: auto;
+        padding: 6px;
+        position: absolute;
+        right: 0;
+        top: 40px;
+        z-index: 10;
+      }
+
+      .download-row {
+        align-items: center;
+        display: flex;
+        gap: 6px;
+      }
+
+      .download-row > span {
+        flex: 1;
+        font-size: 12px;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .download-row button {
+        font-size: 11px;
+        height: 28px;
+        min-width: 0;
+        padding: 0 7px;
+      }
+
       #status {
         color: #9ca3af;
         font-size: 12px;
@@ -320,6 +379,10 @@
         <summary>Bookmarks</summary>
         <div id="bookmark-list" role="menu"></div>
       </details>
+      <details id="download-menu" hidden>
+        <summary>Downloads</summary>
+        <div id="download-list" role="menu"></div>
+      </details>
       <select id="tab-picker" aria-label="Open tab"></select>
       <details id="space-menu" hidden>
         <summary>Spaces</summary>
@@ -344,6 +407,8 @@
       const importData = document.querySelector("#import-data");
       const bookmarkMenu = document.querySelector("#bookmark-menu");
       const bookmarkList = document.querySelector("#bookmark-list");
+      const downloadMenu = document.querySelector("#download-menu");
+      const downloadList = document.querySelector("#download-list");
       const tabPicker = document.querySelector("#tab-picker");
       const spaceMenu = document.querySelector("#space-menu");
       const spaceList = document.querySelector("#space-list");
@@ -443,6 +508,35 @@
         }
       }
 
+      function applyDownloads(downloads = []) {
+        downloadList.replaceChildren();
+        downloadMenu.hidden = downloads.length === 0;
+        for (const download of downloads) {
+          const row = document.createElement("div");
+          row.className = "download-row";
+          const label = document.createElement("span");
+          const percent = download.percent == null ? "" : ` ${download.percent}%`;
+          label.textContent = `${download.filename} · ${download.state}${percent}`;
+          label.title = download.path || download.url || download.filename;
+          row.append(label);
+          if (download.state === "completed" && download.path) {
+            const show = document.createElement("button");
+            show.type = "button";
+            show.textContent = "Show";
+            show.setAttribute("aria-label", `Show downloaded file: ${download.filename}`);
+            show.addEventListener("click", async () => {
+              try {
+                await window.egoLite.showDownload(download.id);
+              } catch (error) {
+                status.textContent = error.message;
+              }
+            });
+            row.append(show);
+          }
+          downloadList.append(row);
+        }
+      }
+
       function applyTabs(tabs = []) {
         tabPicker.replaceChildren();
         const groups = new Map();
@@ -527,6 +621,7 @@
         back.disabled = !state.canGoBack;
         forward.disabled = !state.canGoForward;
         applyBookmarks(state.bookmarks);
+        applyDownloads(state.downloads);
         applySpaces(state.taskSpaces);
         applyUpdateState(state.updateState);
         applyTabs(state.tabs);

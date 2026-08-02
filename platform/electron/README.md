@@ -46,6 +46,8 @@ Agent-created task tabs stay in the background by default, so creating or naviga
 
 The toolbar exposes bookmarks imported into the Electron profile and a Private tab action. Private tabs use an in-memory Chromium partition, do not inherit the primary tab’s cookies, and are not written to the primary session manifest. `Ctrl/Cmd+Shift+N` opens one from the toolbar or a focused page; `Ctrl/Cmd+T` and `Ctrl/Cmd+W` continue to create and close ordinary tabs.
 
+User downloads appear in the toolbar’s Downloads menu with progress and a Show action. Primary-tab downloads use `EGO_LITE_DOWNLOAD_DIR` when set, otherwise the normal `~/Downloads` directory; task-Space downloads retain the SDK/CDP-selected download path.
+
 The Spaces menu lists active agent workspaces and exposes Take over/Return control plus Stop actions; stopping a Space closes its task tabs and removes its persisted task state.
 
 The Electron toolbar also provides New tab and Close tab controls, with Ctrl/Cmd+T and Ctrl/Cmd+W shortcuts from either the toolbar or the focused page; closing the final primary tab keeps one blank replacement tab available.
