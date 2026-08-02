@@ -1444,6 +1444,37 @@ async function registerManagedView(
   return targetId;
 }
 
+function managedRecordForView(view) {
+  return [...managedViews.values()].find(
+    (candidate) => candidate.view === view,
+  );
+}
+
+function shouldActivateOpenedTab(disposition) {
+  return disposition !== "background-tab";
+}
+
+async function openWindowAsManagedTab(view, value, disposition) {
+  const source = managedRecordForView(view);
+  if (!source) return null;
+  if (source.spaceId === null) {
+    const primary = await createPrimaryBrowserView({
+      url: value,
+      privateMode: source.private,
+    });
+    if (shouldActivateOpenedTab(disposition)) {
+      setActiveBrowserView(primary.view);
+    }
+    return primary.targetId;
+  }
+  const task = await createManagedView({
+    spaceId: source.spaceId,
+    spaceName: source.spaceName,
+    url: value,
+  });
+  return task.targetId;
+}
+
 async function createManagedView({
   spaceId,
   spaceName = null,
@@ -1466,8 +1497,8 @@ async function createManagedView({
   installDownloadHandlers(view.webContents.session);
   await loadMigratedExtensions(view.webContents.session);
   await inheritPrimaryCookies(view.webContents.session);
-  view.webContents.setWindowOpenHandler(({ url: openedUrl }) => {
-    void navigateOnView(view, openedUrl).catch((error) => {
+  view.webContents.setWindowOpenHandler(({ url: openedUrl, disposition }) => {
+    void openWindowAsManagedTab(view, openedUrl, disposition).catch((error) => {
       console.error(`[ego-lite] cannot open ${openedUrl}: ${error.message}`);
     });
     return { action: "deny" };
@@ -1816,7 +1847,13 @@ async function startAutoUpdater() {
 }
 
 async function navigate(value) {
-  return navigateOnView(browserView, value);
+  const active = managedRecordForView(browserView);
+  if (!active || active.spaceId === null) {
+    return navigateOnView(browserView, value);
+  }
+  const primary = await createPrimaryBrowserView({ url: value });
+  setActiveBrowserView(primary.view);
+  return normalizeUrl(value);
 }
 
 function storedTabUrl(value, { migration = false } = {}) {
@@ -1968,8 +2005,8 @@ async function createPrimaryBrowserView({
   });
   enableAccessibility(view);
   installDownloadHandlers(view.webContents.session);
-  view.webContents.setWindowOpenHandler(({ url: openedUrl }) => {
-    void navigateOnView(view, openedUrl).catch((error) => {
+  view.webContents.setWindowOpenHandler(({ url: openedUrl, disposition }) => {
+    void openWindowAsManagedTab(view, openedUrl, disposition).catch((error) => {
       console.error(`[ego-lite] cannot open ${openedUrl}: ${error.message}`);
     });
     return { action: "deny" };

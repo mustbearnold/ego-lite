@@ -48,6 +48,14 @@ Use `--server-name NAME` or `EGO_LITE_SERVER_NAME` when more than one browser in
 
 Agent-created task tabs stay in the background by default, so creating or navigating a Space does not replace the user’s visible tab. Use the toolbar’s tab picker to inspect or reveal a Space explicitly.
 
+If a user reveals a Space and submits a URL through the toolbar, the URL opens in a regular primary tab and leaves the Agent tab unchanged. Browser `target=_blank` and `window.open` requests create a new tab in the source tab’s scope; foreground primary requests activate their new user tab, while Agent-created tabs remain background.
+
+The detached URL-routing/CDP probe covers this boundary:
+
+```bash
+npm run test:url-routing
+```
+
 The toolbar exposes bookmarks imported into the Electron profile and a Private tab action. Private tabs use an in-memory Chromium partition, do not inherit the primary tab’s cookies, and are not written to the primary session manifest. `Ctrl/Cmd+Shift+N` opens one from the toolbar or a focused page; `Ctrl/Cmd+T` and `Ctrl/Cmd+W` continue to create and close ordinary tabs.
 
 `Ctrl/Cmd+F` opens the native Find in Page bar. It reports the current match count, supports next/previous navigation and Escape/close, and searches the active BrowserView through Chromium’s page-find API. The detached X11/CDP probe covers the shortcut and result navigation:
