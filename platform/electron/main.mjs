@@ -529,6 +529,22 @@ function installViewListeners(view) {
           `[ego-lite] could not close shortcut tab: ${error?.message || String(error)}`,
         );
       });
+    } else if (key === "l") {
+      event.preventDefault();
+      mainWindow?.webContents.send("ego-lite:focus-address");
+    } else if (key === "r") {
+      event.preventDefault();
+      browserView?.webContents.reload();
+    } else if (key === "[") {
+      event.preventDefault();
+      if (browserView?.webContents.navigationHistory.canGoBack()) {
+        browserView.webContents.navigationHistory.goBack();
+      }
+    } else if (key === "]") {
+      event.preventDefault();
+      if (browserView?.webContents.navigationHistory.canGoForward()) {
+        browserView.webContents.navigationHistory.goForward();
+      }
     }
   });
 }

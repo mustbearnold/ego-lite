@@ -124,13 +124,16 @@ async function bridgeRequest(bridge, pathname, body = {}) {
     body: JSON.stringify(body),
   });
   const payload = await response.json();
-  if (!response.ok) throw new Error(payload.error || `bridge failed: ${pathname}`);
+  if (!response.ok)
+    throw new Error(payload.error || `bridge failed: ${pathname}`);
   return payload;
 }
 
 async function readEndpoint() {
   try {
-    const lines = (await readFile(join(profileDir, "DevToolsActivePort"), "utf8"))
+    const lines = (
+      await readFile(join(profileDir, "DevToolsActivePort"), "utf8")
+    )
       .trim()
       .split(/\r?\n/);
     return `ws://127.0.0.1:${Number(lines[0])}${lines[1]}`;
@@ -185,6 +188,22 @@ try {
       );
       return value?.newTab && value.closeTab ? value : null;
     });
+    await evaluate(
+      connection,
+      attached.sessionId,
+      "window.dispatchEvent(new KeyboardEvent('keydown', {key: 'l', ctrlKey: true, bubbles: true, cancelable: true})); true",
+    );
+    const addressShortcut = await waitFor(
+      "address focus shortcut",
+      async () => {
+        const value = await evaluate(
+          connection,
+          attached.sessionId,
+          "document.activeElement?.id === 'address'",
+        );
+        return value ? { focused: true } : null;
+      },
+    );
 
     await evaluate(
       connection,
@@ -198,7 +217,9 @@ try {
     });
     const newTab = afterNewTab.find((tab) => tab.active);
     if (!newTab || newTab.targetId === initial.tabs[0].targetId) {
-      throw new Error(`new tab was not selected: ${JSON.stringify(afterNewTab)}`);
+      throw new Error(
+        `new tab was not selected: ${JSON.stringify(afterNewTab)}`,
+      );
     }
 
     await evaluate(
@@ -230,6 +251,7 @@ try {
     console.log(
       JSON.stringify({
         controls,
+        addressShortcut,
         initialTargetId: initial.tabs[0].targetId,
         afterNewTab: afterNewTab.map((tab) => ({
           targetId: tab.targetId,
@@ -243,7 +265,9 @@ try {
     connection.close();
   }
 } catch (error) {
-  throw new Error(`${error.message}\nElectron output:\n${electron?.output() || ""}`);
+  throw new Error(
+    `${error.message}\nElectron output:\n${electron?.output() || ""}`,
+  );
 } finally {
   await stopElectron(electron);
   await rm(profileDir, {

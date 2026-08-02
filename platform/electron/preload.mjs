@@ -28,4 +28,9 @@ contextBridge.exposeInMainWorld("egoLite", {
     ipcRenderer.on("ego-lite:import-status", listener);
     return () => ipcRenderer.removeListener("ego-lite:import-status", listener);
   },
+  onFocusAddress: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("ego-lite:focus-address", listener);
+    return () => ipcRenderer.removeListener("ego-lite:focus-address", listener);
+  },
 });

@@ -685,17 +685,35 @@
       window.egoLite.onImportStatus((value) => {
         if (value?.state === "restarting") status.textContent = "restarting…";
       });
+      function focusAddress() {
+        address.focus();
+        address.select();
+      }
+      window.egoLite.onFocusAddress(focusAddress);
       window.addEventListener("keydown", (event) => {
-        if (!(event.metaKey || event.ctrlKey)) return;
-        if (event.shiftKey && event.key.toLowerCase() === "n") {
+        if (event.altKey || !(event.metaKey || event.ctrlKey)) return;
+        const key = event.key.toLowerCase();
+        if (event.shiftKey && key === "n") {
           event.preventDefault();
           newPrivateTab.click();
-        } else if (event.key.toLowerCase() === "t") {
+        } else if (key === "t") {
           event.preventDefault();
           newTab.click();
-        } else if (event.key.toLowerCase() === "w") {
+        } else if (key === "w") {
           event.preventDefault();
           closeTab.click();
+        } else if (key === "l") {
+          event.preventDefault();
+          focusAddress();
+        } else if (key === "r") {
+          event.preventDefault();
+          window.egoLite.reload();
+        } else if (key === "[") {
+          event.preventDefault();
+          back.click();
+        } else if (key === "]") {
+          event.preventDefault();
+          forward.click();
         }
       });
       window.egoLite.onBrowserState(applyState);
