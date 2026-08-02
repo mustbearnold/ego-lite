@@ -1,6 +1,8 @@
 import { parseRef } from "./ref-map.js";
 import { queryAllExpression } from "./locator-query.js";
 
+const MAX_ROLE_LOCATOR_FRAMES = 128;
+
 export class ElementResolutionError extends Error {
   kind: "transient" | "permanent";
   constructor(message: string, kind: "transient" | "permanent") {
@@ -422,6 +424,67 @@ async function findBackendNodeIdByRoleName(
 }
 
 async function findBackendNodeIdsByRoleName(
+  cdp,
+  sessionId,
+  role,
+  name,
+  frameId = undefined,
+  iframeSessions = new Map(),
+): Promise<number[]> {
+  if (frameId === undefined) {
+    const frameIds = await roleLocatorFrameIds(cdp, sessionId);
+    if (frameIds) {
+      const matches = [];
+      for (const candidateFrameId of frameIds) {
+        matches.push(
+          ...(await readBackendNodeIdsByRoleName(
+            cdp,
+            sessionId,
+            role,
+            name,
+            candidateFrameId,
+            iframeSessions,
+          )),
+        );
+      }
+      return matches;
+    }
+  }
+
+  return readBackendNodeIdsByRoleName(
+    cdp,
+    sessionId,
+    role,
+    name,
+    frameId,
+    iframeSessions,
+  );
+}
+
+async function roleLocatorFrameIds(cdp, sessionId): Promise<string[] | null> {
+  let result;
+  try {
+    result = await send(cdp, "Page.getFrameTree", {}, sessionId);
+  } catch {
+    return null;
+  }
+  const frameIds = [];
+  collectRoleLocatorFrameIds(result?.frameTree, frameIds);
+  return frameIds.length > 0 ? frameIds : null;
+}
+
+function collectRoleLocatorFrameIds(tree, frameIds) {
+  if (!tree?.frame?.id || frameIds.length >= MAX_ROLE_LOCATOR_FRAMES) {
+    return;
+  }
+  frameIds.push(tree.frame.id);
+  for (const child of tree.childFrames || []) {
+    collectRoleLocatorFrameIds(child, frameIds);
+    if (frameIds.length >= MAX_ROLE_LOCATOR_FRAMES) break;
+  }
+}
+
+async function readBackendNodeIdsByRoleName(
   cdp,
   sessionId,
   role,

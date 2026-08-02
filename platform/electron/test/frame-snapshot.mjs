@@ -158,13 +158,20 @@ try {
   host.stdin.end(`
 await page.goto('http://127.0.0.1:${parentPort}/parent', { waitUntil: 'load' })
 const before = await page.snapshotRaw()
-console.log(JSON.stringify({ before }))
 const child = before.refs.find((ref) => ref.name === 'Child action')
 if (!child) throw new Error('nested child ref missing')
-await page.locator('@' + child.backendNodeId).click()
+await page.locator('loc=role:button[name="Child action"]').click()
 await page.waitForTimeout(200)
-const after = await page.snapshotRaw()
-console.log(JSON.stringify({ after }))
+const roleAfter = await page.snapshotRaw()
+await page.goto('http://127.0.0.1:${parentPort}/parent', { waitUntil: 'load' })
+await page.waitForTimeout(200)
+const refBefore = await page.snapshotRaw()
+const freshChild = refBefore.refs.find((ref) => ref.name === 'Child action')
+if (!freshChild) throw new Error('nested child ref missing after role navigation')
+await page.locator('@' + freshChild.backendNodeId).click()
+await page.waitForTimeout(200)
+const refAfter = await page.snapshotRaw()
+console.log(JSON.stringify({ before, roleAfter, refBefore, refAfter }))
 `);
   const exitCode = await new Promise((resolvePromise) =>
     host.once("close", resolvePromise),
@@ -179,20 +186,26 @@ console.log(JSON.stringify({ after }))
     .split(/\r?\n/)
     .filter(Boolean)
     .map((line) => JSON.parse(line));
-  assert.equal(reports.length, 2, hostStdout);
-  const before = reports[0].before;
-  const after = reports[1].after;
+  assert.equal(reports.length, 1, hostStdout);
+  const { before, roleAfter, refBefore, refAfter } = reports[0];
   const nestedRef = before.refs.find((ref) => ref.name === "Child action");
   assert.ok(nestedRef?.frameId, "nested ref should retain its frame id");
   assert.match(before.content, /Iframe "child"/);
-  assert.match(before.content, /button "Child action" \[ref=/);
-  assert.match(after.content, /Clicked child/);
-  assert.doesNotMatch(after.content, /Child action/);
+  assert.match(
+    before.content,
+    /button "Child action" \[ref=.*loc=role:button\[name="Child action"\]\]/,
+  );
+  assert.match(roleAfter.content, /Clicked child/);
+  assert.doesNotMatch(roleAfter.content, /Child action/);
+  assert.match(refBefore.content, /button "Child action" \[ref=/);
+  assert.match(refAfter.content, /Clicked child/);
+  assert.doesNotMatch(refAfter.content, /Child action/);
   console.log(
     JSON.stringify({
       nestedFrame: nestedRef.frameId,
       beforeHasNestedAction: before.content.includes("Child action"),
-      afterHasClickedChild: after.content.includes("Clicked child"),
+      roleLocatorHasClickedChild: roleAfter.content.includes("Clicked child"),
+      refHasClickedChild: refAfter.content.includes("Clicked child"),
       electronOutput: `${electronStdout}\n${electronStderr}`.trim(),
     }),
   );

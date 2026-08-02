@@ -214,7 +214,7 @@ test("role locators use AX regex accessible names in collection queries", async 
   }
   assert.deepEqual(
     calls.map((call) => call.method),
-    ["Accessibility.getFullAXTree"],
+    ["Page.getFrameTree", "Accessibility.getFullAXTree"],
   );
 });
 

@@ -167,8 +167,10 @@ test("snapshot accessibility tree includes nested frame content and frame refs",
     includeStableLocator: true,
   });
   assert.match(rendered.content, /Iframe "Child frame"/);
-  assert.match(rendered.content, /button "Child action" \[ref=11\]/);
-  assert.doesNotMatch(rendered.content, /Child action.*loc=role/);
+  assert.match(
+    rendered.content,
+    /button "Child action" \[ref=11, loc=role:button\[name="Child action"\]\]/,
+  );
   assert.deepEqual(rendered.refs, [
     {
       backendNodeId: 11,

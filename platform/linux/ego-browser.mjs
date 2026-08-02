@@ -1524,8 +1524,7 @@ function renderAccessibilityTree(nodes, options) {
       }
       if (
         options.includeStableLocator !== false &&
-        actionable &&
-        !node.frameId
+        actionable
       ) {
         const stableLocator = stableLocatorForNode(role, name);
         if (stableLocator) annotations.push(stableLocator);
