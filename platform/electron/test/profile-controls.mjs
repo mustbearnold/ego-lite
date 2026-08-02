@@ -14,6 +14,13 @@ const profileDir = join(profileRoot, "chromium-profile");
 const registryPath = join(profileRoot, "profiles.json");
 const bridgeFile = join(profileDir, "ego-lite-bridge.json");
 let electron;
+let relaunchedPid;
+
+function profileDirectory(profileId) {
+  return profileId === "default"
+    ? profileDir
+    : join(profileRoot, "profiles", profileId, "chromium-profile");
+}
 
 class CdpConnection {
   constructor(url) {
@@ -81,13 +88,14 @@ async function waitFor(label, callback, timeoutMs = 15_000) {
   );
 }
 
-function startElectron() {
+function startElectron(profileId = "default") {
   const child = spawn(electronPath, ["platform/electron"], {
     cwd: repoDir,
     env: {
       ...process.env,
       EGO_LITE_PROFILE_ROOT: profileRoot,
-      EGO_LITE_STATE_PATH: join(profileRoot, "task-spaces.json"),
+      EGO_LITE_PROFILE_ID: profileId,
+      XDG_STATE_HOME: join(profileRoot, "state"),
       EGO_LITE_DISABLE_GPU: "1",
       EGO_LITE_SKIP_MIGRATION: "1",
       EGO_LITE_DISABLE_AUTO_UPDATE: "1",
@@ -116,10 +124,10 @@ async function stopElectron(instance) {
   ).catch(() => instance.child.kill("SIGKILL"));
 }
 
-async function readEndpoint() {
+async function readEndpoint(directory = profileDir) {
   try {
     const lines = (
-      await readFile(join(profileDir, "DevToolsActivePort"), "utf8")
+      await readFile(join(directory, "DevToolsActivePort"), "utf8")
     )
       .trim()
       .split(/\r?\n/);
@@ -127,6 +135,33 @@ async function readEndpoint() {
   } catch {
     return null;
   }
+}
+
+async function stopProcess(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return;
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return;
+  }
+  await waitFor(
+    `profile process ${pid} shutdown`,
+    async () => {
+      try {
+        process.kill(pid, 0);
+        return false;
+      } catch {
+        return true;
+      }
+    },
+    5_000,
+  ).catch(() => {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // The relaunched profile process already exited.
+    }
+  });
 }
 
 async function evaluate(connection, sessionId, expression) {
@@ -157,7 +192,7 @@ try {
     )}\n`,
   );
   electron = startElectron();
-  await waitFor("Electron bridge", async () => {
+  const defaultBridge = await waitFor("Electron bridge", async () => {
     try {
       return JSON.parse(await readFile(bridgeFile, "utf8"));
     } catch {
@@ -186,9 +221,58 @@ try {
       return value?.visible && value.buttons?.length === 3 ? value : null;
     });
     const registry = JSON.parse(await readFile(registryPath, "utf8"));
-    console.log(JSON.stringify({ profiles, registry }));
+    await evaluate(
+      connection,
+      attached.sessionId,
+      "window.egoLite.switchProfile({id: 'work'}); true",
+    );
+    console.log(
+      JSON.stringify({ profiles, registry, defaultPid: defaultBridge.pid }),
+    );
   } finally {
     connection.close();
+  }
+  await stopElectron(electron);
+  const workProfileDir = profileDirectory("work");
+  const workBridge = await waitFor("relaunch into Work profile", async () => {
+    try {
+      const value = JSON.parse(
+        await readFile(join(workProfileDir, "ego-lite-bridge.json"), "utf8"),
+      );
+      return Number.isInteger(value.pid) ? value : null;
+    } catch {
+      return null;
+    }
+  });
+  relaunchedPid = workBridge.pid;
+  const workEndpoint = await waitFor("Work profile CDP", () =>
+    readEndpoint(workProfileDir),
+  );
+  const workConnection = await new CdpConnection(workEndpoint).connect();
+  try {
+    const toolbar = await waitFor("Work toolbar target", async () => {
+      const targets = await workConnection.request("Target.getTargets");
+      return targets.targetInfos?.find((target) =>
+        target.url.includes("/renderer/index.html"),
+      );
+    });
+    const attached = await workConnection.request("Target.attachToTarget", {
+      targetId: toolbar.targetId,
+      flatten: true,
+    });
+    const summary = await waitFor("Work profile label", async () => {
+      const value = await evaluate(
+        workConnection,
+        attached.sessionId,
+        "document.querySelector('#profile-menu summary')?.textContent",
+      );
+      return value === "Profile · Work" ? value : null;
+    });
+    console.log(
+      JSON.stringify({ restartedProfile: summary, workPid: relaunchedPid }),
+    );
+  } finally {
+    workConnection.close();
   }
 } catch (error) {
   throw new Error(
@@ -196,5 +280,6 @@ try {
   );
 } finally {
   await stopElectron(electron);
+  await stopProcess(relaunchedPid);
   await rm(profileRoot, { recursive: true, force: true });
 }

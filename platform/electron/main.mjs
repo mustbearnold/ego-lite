@@ -1490,7 +1490,7 @@ async function startBridge() {
   const address = bridgeServer.address();
   await writeFile(
     bridgeFile,
-    `${JSON.stringify({ port: address.port, token: bridgeToken })}\n`,
+    `${JSON.stringify({ port: address.port, token: bridgeToken, pid: process.pid })}\n`,
   );
   if (!browserStateSyncTimer) {
     browserStateSyncTimer = setInterval(() => {
