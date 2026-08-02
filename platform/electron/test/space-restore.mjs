@@ -90,6 +90,7 @@ function startElectron() {
       EGO_LITE_STATE_PATH: statePath,
       EGO_LITE_DISABLE_GPU: "1",
       EGO_LITE_SKIP_MIGRATION: "1",
+      EGO_LITE_DISABLE_AUTO_UPDATE: "1",
       EGO_BROWSER_SDK_PATH: sdkPath,
     },
     stdio: ["ignore", "pipe", "pipe"],

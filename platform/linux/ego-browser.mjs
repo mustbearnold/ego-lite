@@ -129,6 +129,7 @@ Commands:
   ego-browser --doctor
   ego-browser --launch
   ego-browser --reload
+  ego-browser upgrade
   ego-browser --migrate-profile [--from PATH]
   ego-browser nodejs [--sdk-path PATH]
 
@@ -815,16 +816,33 @@ class LinuxEgoHost {
   }
 
   getBrowserVersion() {
-    return Promise.resolve({
+    const fallback = {
       currentVersion: HOST_VERSION,
       updateAvailable: false,
-    });
+    };
+    if (!this.electronBridge) return Promise.resolve(fallback);
+    return this.electronBridge
+      .request("/update-state")
+      .then((result) => {
+        const updateState = result?.updateState || {};
+        const updateAvailable = ["downloading", "ready"].includes(
+          updateState.status,
+        );
+        return {
+          currentVersion: updateState.currentVersion || HOST_VERSION,
+          updateAvailable,
+          ...(updateState.version ? { latestVersion: updateState.version } : {}),
+        };
+      })
+      .catch(() => fallback);
   }
 
   upgradeBrowser() {
     return Promise.resolve({
       ok: true,
-      message: "Linux host updates are delivered with the source checkout.",
+      message: this.isElectron
+        ? "Linux desktop updates download in the background and apply on the next launch."
+        : "Linux host updates are delivered with the source checkout.",
     });
   }
 
@@ -2183,6 +2201,8 @@ function parseArgs(argv) {
       command = "launch";
     } else if (arg === "--reload") {
       command = "reload";
+    } else if (arg === "upgrade" || arg === "--upgrade") {
+      command = "upgrade";
     } else if (arg === "--migrate-profile") {
       command = "migrate-profile";
     } else if (arg === "--from") {
@@ -2215,6 +2235,12 @@ export async function runHost(argv = process.argv.slice(2)) {
         "No running Linux browser connection found; the next command will launch Chromium.\n",
       );
     }
+    return 0;
+  }
+  if (command === "upgrade") {
+    process.stdout.write(
+      "Linux desktop updates are downloaded in the background and apply on the next launch.\n",
+    );
     return 0;
   }
   if (command === "migrate-profile") {

@@ -215,6 +215,28 @@
         border-color: #059669;
         color: #a7f3d0;
       }
+
+      #update {
+        border: 1px solid #4b5563;
+        border-radius: 999px;
+        color: #d1d5db;
+        font-size: 11px;
+        max-width: 180px;
+        overflow: hidden;
+        padding: 4px 8px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      #update[data-status="ready"] {
+        border-color: #059669;
+        color: #a7f3d0;
+      }
+
+      #update[data-status="downloading"] {
+        border-color: #2563eb;
+        color: #bfdbfe;
+      }
     </style>
   </head>
   <body>
@@ -250,6 +272,7 @@
         <div id="group-list" role="menu"></div>
       </details>
       <span id="control" aria-live="polite">Your tab</span>
+      <span id="update" aria-live="polite" hidden></span>
       <span id="status">ready</span>
     </div>
     <script>
@@ -266,6 +289,7 @@
       const groupMenu = document.querySelector("#group-menu");
       const groupList = document.querySelector("#group-list");
       const control = document.querySelector("#control");
+      const update = document.querySelector("#update");
 
       function tabLabel(tab) {
         const space =
@@ -382,6 +406,25 @@
         }
       }
 
+      function applyUpdateState(state = {}) {
+        const status = state.status;
+        if (status === "ready") {
+          update.hidden = false;
+          update.dataset.status = status;
+          update.textContent = "Update ready · next launch";
+        } else if (status === "downloading") {
+          update.hidden = false;
+          update.dataset.status = status;
+          update.textContent = state.percent == null
+            ? "Downloading update…"
+            : `Downloading update ${state.percent}%`;
+        } else {
+          update.hidden = true;
+          update.textContent = "";
+          delete update.dataset.status;
+        }
+      }
+
       function applyState(state) {
         address.value = state.url || "about:blank";
         status.textContent = state.agentTaskState || state.title || "ego lite";
@@ -394,6 +437,7 @@
         back.disabled = !state.canGoBack;
         forward.disabled = !state.canGoForward;
         applySpaces(state.taskSpaces);
+        applyUpdateState(state.updateState);
         applyTabs(state.tabs);
       }
 

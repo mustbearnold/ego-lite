@@ -23,6 +23,7 @@ import {
   findMigrationProfiles,
   profileLooksUsable,
 } from "./migration-discovery.mjs";
+import { createUpdateController } from "./update.mjs";
 
 const MAIN_DIR = dirname(fileURLToPath(import.meta.url));
 const PROFILE_DIR = resolve(
@@ -73,6 +74,14 @@ const sessionExtensionLoads = new WeakMap();
 let bridgeServer;
 let bridgeToken;
 let browserStateSyncTimer;
+let updateController;
+let updateState = {
+  status: "disabled",
+  currentVersion: app.getVersion(),
+  version: null,
+  percent: null,
+  message: null,
+};
 let agentTaskState = null;
 const bridgeFile = join(PROFILE_DIR, "ego-lite-bridge.json");
 const MIGRATION_PROMPT_MARKER = join(PROFILE_DIR, ".migration-prompted");
@@ -185,6 +194,7 @@ function currentBrowserState() {
     agentTaskState,
     controlState: currentControlState(),
     taskSpaces: currentTaskSpaces(),
+    updateState: { ...updateState },
     canGoBack: browserView?.webContents.navigationHistory.canGoBack() || false,
     canGoForward:
       browserView?.webContents.navigationHistory.canGoForward() || false,
@@ -867,6 +877,9 @@ async function handleBridgeRequest(pathname, body) {
     publishBrowserState();
     return { agentTaskState };
   }
+  if (pathname === "/update-state") {
+    return { updateState: { ...updateState } };
+  }
   if (pathname === "/highlight") return highlightAgentPointer(body);
   if (pathname === "/create-tab") return createManagedView(body);
   if (pathname === "/activate-tab") {
@@ -920,6 +933,56 @@ async function startBridge() {
         currentBrowserState(),
       );
     }, 500);
+  }
+}
+
+async function startAutoUpdater() {
+  const enabled =
+    app.isPackaged &&
+    !CLI_MODE &&
+    process.env.EGO_LITE_DISABLE_AUTO_UPDATE !== "1";
+  if (!enabled) {
+    updateState = {
+      ...updateState,
+      status: "disabled",
+      message: null,
+    };
+    return;
+  }
+
+  try {
+    // Keep the updater import lazy so CLI/dev launches do not load its provider
+    // or attempt a network check.
+    const { autoUpdater } = await import("electron-updater");
+    updateController = createUpdateController({
+      updater: autoUpdater,
+      currentVersion: app.getVersion(),
+      onState: (next) => {
+        updateState = next;
+        publishBrowserState();
+      },
+    });
+    void updateController.start().catch((error) => {
+      updateState = {
+        ...updateState,
+        status: "error",
+        message: String(error?.message || error || "update check failed").slice(
+          0,
+          240,
+        ),
+      };
+      publishBrowserState();
+    });
+  } catch (error) {
+    updateState = {
+      ...updateState,
+      status: "error",
+      message: String(error?.message || error || "updater unavailable").slice(
+        0,
+        240,
+      ),
+    };
+    publishBrowserState();
   }
 }
 
@@ -1477,6 +1540,7 @@ if (!hasSingleInstance) {
     }
     await createWindow();
     await startBridge();
+    void startAutoUpdater();
   });
 
   app.on("window-all-closed", () => {

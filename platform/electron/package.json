@@ -1,6 +1,6 @@
 {
   "name": "ego-lite-electron",
-  "version": "0.1.0",
+  "version": "1.2.3",
   "description": "Electron desktop package for the ego lite Linux host",
   "author": {
     "name": "ego lite contributors",
@@ -13,6 +13,9 @@
   "private": true,
   "type": "module",
   "main": "main.mjs",
+  "dependencies": {
+    "electron-updater": "6.8.9"
+  },
   "scripts": {
     "build:sdk": "npm --prefix ../../package/ego-browser run build",
     "start": "electron .",
@@ -32,9 +35,11 @@
     "test:snapshot-contract": "node test/snapshot-contract.mjs",
     "test:space-restore": "npm run build:sdk && xvfb-run --auto-servernum node test/space-restore.mjs",
     "test:tab-controls": "xvfb-run --auto-servernum node test/tab-controls.mjs",
+    "test:update-controller": "node test/update-controller.mjs",
     "package:dir": "npm run build:sdk && electron-builder --linux dir",
     "package:appimage": "npm run build:sdk && electron-builder --linux AppImage",
-    "package:linux": "npm run build:sdk && electron-builder --linux"
+    "package:linux": "npm run build:sdk && electron-builder --linux",
+    "package:release": "npm run build:sdk && electron-builder --linux --publish always"
   },
   "devDependencies": {
     "electron": "43.2.0",
@@ -50,6 +55,7 @@
       "main.mjs",
       "migration-discovery.mjs",
       "preload.mjs",
+      "update.mjs",
       "renderer/**"
     ],
     "extraResources": [
@@ -103,6 +109,14 @@
       "description": "Electron desktop package for the ego lite Linux host",
       "syncDesktopName": true,
       "icon": "../../assets/logo.png"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "mustbearnold",
+        "repo": "ego-lite-linux",
+        "releaseType": "release"
+      }
+    ]
   }
 }

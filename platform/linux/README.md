@@ -28,6 +28,8 @@ For an embedded Chromium desktop package, use the Electron project in
 `platform/electron`. It produces an unpacked Linux app plus AppImage, Debian,
 and RPM artifacts and includes the host, SDK, and skill resources.
 
+Tagged AppImage releases check for updates in the background and apply a downloaded update on the next launch; Debian and RPM installations use their package-manager update path. Set `EGO_LITE_DISABLE_AUTO_UPDATE=1` for offline or automated runs.
+
 ```bash
 cd platform/electron
 npm install
