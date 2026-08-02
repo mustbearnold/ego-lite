@@ -29,6 +29,7 @@
         gap: 8px;
         height: 52px;
         padding: 8px 12px;
+        position: relative;
       }
 
       button {
@@ -392,6 +393,40 @@
         padding: 0 7px;
       }
 
+      #find-bar {
+        align-items: center;
+        background: #1f2937;
+        border: 1px solid #4b5563;
+        border-radius: 6px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+        display: flex;
+        gap: 6px;
+        padding: 5px;
+        position: absolute;
+        right: 12px;
+        top: 8px;
+        z-index: 20;
+      }
+
+      #find-input {
+        flex: 0 1 220px;
+        font-size: 13px;
+        width: 220px;
+      }
+
+      #find-count {
+        color: #9ca3af;
+        font-size: 12px;
+        min-width: 62px;
+        text-align: center;
+      }
+
+      #find-bar button {
+        font-size: 13px;
+        height: 30px;
+        min-width: 30px;
+      }
+
       #status {
         color: #9ca3af;
         font-size: 12px;
@@ -508,6 +543,13 @@
       <span id="control" aria-live="polite">Your tab</span>
       <span id="update" aria-live="polite" hidden></span>
       <span id="status">ready</span>
+      <div id="find-bar" hidden role="search" aria-label="Find in page">
+        <input id="find-input" aria-label="Find in page" autocomplete="off" spellcheck="false" />
+        <span id="find-count" aria-live="polite"></span>
+        <button id="find-previous" type="button" title="Previous match" aria-label="Previous match">↑</button>
+        <button id="find-next" type="button" title="Next match" aria-label="Next match">↓</button>
+        <button id="find-close" type="button" title="Close find bar" aria-label="Close find bar">×</button>
+      </div>
     </div>
     <script>
       const address = document.querySelector("#address");
@@ -534,6 +576,12 @@
       const groupList = document.querySelector("#group-list");
       const control = document.querySelector("#control");
       const update = document.querySelector("#update");
+      const findBar = document.querySelector("#find-bar");
+      const findInput = document.querySelector("#find-input");
+      const findCount = document.querySelector("#find-count");
+      const findPrevious = document.querySelector("#find-previous");
+      const findNext = document.querySelector("#find-next");
+      const findClose = document.querySelector("#find-close");
 
       function tabLabel(tab) {
         const space =
@@ -741,6 +789,42 @@
         }
       }
 
+      function applyFindResult(result = {}) {
+        if (result.cleared || !findInput.value) {
+          findCount.textContent = "";
+          return;
+        }
+        if (!result.finalUpdate) {
+          findCount.textContent = "Searching…";
+          return;
+        }
+        const matches = Number(result.matches) || 0;
+        findCount.textContent = matches
+          ? `${Number(result.activeMatchOrdinal) || 0} of ${matches}`
+          : "No matches";
+      }
+
+      function openFind() {
+        findBar.hidden = false;
+        findInput.focus();
+        findInput.select();
+        void window.egoLite.findInPage({ text: findInput.value });
+      }
+
+      function closeFind() {
+        findBar.hidden = true;
+        findCount.textContent = "";
+        void window.egoLite.closeFind();
+      }
+
+      function moveFind(forward) {
+        void window.egoLite.findInPage({
+          text: findInput.value,
+          forward,
+          findNext: true,
+        });
+      }
+
       function applyTabs(tabs = []) {
         tabPicker.replaceChildren();
         const activeTab = tabs.find((tab) => tab.active);
@@ -913,7 +997,27 @@
         address.select();
       }
       window.egoLite.onFocusAddress(focusAddress);
+      window.egoLite.onFocusFind(openFind);
+      window.egoLite.onFindResult(applyFindResult);
+      findInput.addEventListener("input", () => moveFind(true));
+      findInput.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          closeFind();
+        } else if (event.key === "Enter") {
+          event.preventDefault();
+          moveFind(!event.shiftKey);
+        }
+      });
+      findPrevious.addEventListener("click", () => moveFind(false));
+      findNext.addEventListener("click", () => moveFind(true));
+      findClose.addEventListener("click", closeFind);
       window.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && !findBar.hidden) {
+          event.preventDefault();
+          closeFind();
+          return;
+        }
         if (event.altKey || !(event.metaKey || event.ctrlKey)) return;
         const key = event.key.toLowerCase();
         if (event.shiftKey && key === "n") {
@@ -928,6 +1032,9 @@
         } else if (key === "l") {
           event.preventDefault();
           focusAddress();
+        } else if (key === "f") {
+          event.preventDefault();
+          openFind();
         } else if (key === "r") {
           event.preventDefault();
           window.egoLite.reload();

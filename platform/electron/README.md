@@ -48,6 +48,12 @@ Agent-created task tabs stay in the background by default, so creating or naviga
 
 The toolbar exposes bookmarks imported into the Electron profile and a Private tab action. Private tabs use an in-memory Chromium partition, do not inherit the primary tab’s cookies, and are not written to the primary session manifest. `Ctrl/Cmd+Shift+N` opens one from the toolbar or a focused page; `Ctrl/Cmd+T` and `Ctrl/Cmd+W` continue to create and close ordinary tabs.
 
+`Ctrl/Cmd+F` opens the native Find in Page bar. It reports the current match count, supports next/previous navigation and Escape/close, and searches the active BrowserView through Chromium’s page-find API. The detached X11/CDP probe covers the shortcut and result navigation:
+
+```bash
+npm run test:find-in-page
+```
+
 User downloads appear in the toolbar’s Downloads menu with progress, an Open action that uses the Linux desktop default application, and a Show action. Primary-tab downloads use `EGO_LITE_DOWNLOAD_DIR` when set, otherwise the normal `~/Downloads` directory; task-Space downloads retain the SDK/CDP-selected download path.
 
 The native window restores its last usable position and size, keeps the normal bounds behind a maximized session, and restores maximized state on the next launch. The detached X11/Xvfb probe covers seed, resize, quit, and restart restoration:

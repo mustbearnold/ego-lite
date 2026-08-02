@@ -816,6 +816,14 @@ function installViewListeners(view) {
   ]) {
     view.webContents.on(eventName, publishBrowserState);
   }
+  view.webContents.on("found-in-page", (_event, result) => {
+    if (view !== browserView || !mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send("ego-lite:find-result", {
+      activeMatchOrdinal: Number(result?.activeMatchOrdinal) || 0,
+      matches: Number(result?.matches) || 0,
+      finalUpdate: Boolean(result?.finalUpdate),
+    });
+  });
   view.webContents.on("before-input-event", (event, input) => {
     if (input.type !== "keyDown" || input.isAutoRepeat) return;
     const rawKey = String(input.key || "");
@@ -826,6 +834,11 @@ function installViewListeners(view) {
     }
     if (input.alt || !(input.control || input.meta)) return;
     const key = String(input.key || "").toLowerCase();
+    if (!input.shift && key === "f") {
+      event.preventDefault();
+      mainWindow?.webContents.send("ego-lite:focus-find");
+      return;
+    }
     if (input.shift && key === "n") {
       event.preventDefault();
       void createUserTab({ privateMode: true }).catch((error) => {
@@ -2132,6 +2145,29 @@ ipcMain.handle("ego-lite:forward", () => {
 });
 ipcMain.handle("ego-lite:reload", () => browserView?.webContents.reload());
 ipcMain.handle("ego-lite:toggle-tab-mute", () => setActiveTabMuted());
+ipcMain.handle("ego-lite:find-in-page", (_event, value) => {
+  const text = String(value?.text || "");
+  if (!browserView || !text) {
+    browserView?.webContents.stopFindInPage("clearSelection");
+    return { cleared: true };
+  }
+  const requestId = browserView.webContents.findInPage(text, {
+    forward: value?.forward !== false,
+    findNext: Boolean(value?.findNext),
+    matchCase: Boolean(value?.matchCase),
+  });
+  return { requestId };
+});
+ipcMain.handle("ego-lite:close-find", () => {
+  browserView?.webContents.stopFindInPage("clearSelection");
+  mainWindow?.webContents.send("ego-lite:find-result", {
+    activeMatchOrdinal: 0,
+    matches: 0,
+    finalUpdate: true,
+    cleared: true,
+  });
+  return { closed: true };
+});
 ipcMain.handle("ego-lite:import-data", () => requestProfileImport());
 ipcMain.handle("ego-lite:switch-profile", (_event, value) => {
   const id = String(value?.id || "").trim().toLowerCase();

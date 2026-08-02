@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld("egoLite", {
   back: () => ipcRenderer.invoke("ego-lite:back"),
   forward: () => ipcRenderer.invoke("ego-lite:forward"),
   reload: () => ipcRenderer.invoke("ego-lite:reload"),
+  findInPage: (value) => ipcRenderer.invoke("ego-lite:find-in-page", value),
+  closeFind: () => ipcRenderer.invoke("ego-lite:close-find"),
   toggleTabMute: () => ipcRenderer.invoke("ego-lite:toggle-tab-mute"),
   switchProfile: (value) => ipcRenderer.invoke("ego-lite:switch-profile", value),
   createProfile: (value) => ipcRenderer.invoke("ego-lite:create-profile", value),
@@ -37,5 +39,15 @@ contextBridge.exposeInMainWorld("egoLite", {
     const listener = () => callback();
     ipcRenderer.on("ego-lite:focus-address", listener);
     return () => ipcRenderer.removeListener("ego-lite:focus-address", listener);
+  },
+  onFocusFind: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("ego-lite:focus-find", listener);
+    return () => ipcRenderer.removeListener("ego-lite:focus-find", listener);
+  },
+  onFindResult: (callback) => {
+    const listener = (_event, result) => callback(result);
+    ipcRenderer.on("ego-lite:find-result", listener);
+    return () => ipcRenderer.removeListener("ego-lite:find-result", listener);
   },
 });
