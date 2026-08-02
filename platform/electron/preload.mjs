@@ -18,6 +18,12 @@ contextBridge.exposeInMainWorld("egoLite", {
     ipcRenderer.invoke("ego-lite:remove-reading-list", url),
   setExtension: (value) => ipcRenderer.invoke("ego-lite:set-extension", value),
   importData: () => ipcRenderer.invoke("ego-lite:import-data"),
+  getBrowserSync: () => ipcRenderer.invoke("ego-lite:get-browser-sync"),
+  setBrowserSync: (value) =>
+    ipcRenderer.invoke("ego-lite:set-browser-sync", value),
+  chooseBrowserSyncSource: () =>
+    ipcRenderer.invoke("ego-lite:choose-browser-sync-source"),
+  syncBrowserData: () => ipcRenderer.invoke("ego-lite:sync-browser-data"),
   setTabGroup: (value) => ipcRenderer.invoke("ego-lite:set-tab-group", value),
   newTab: () => ipcRenderer.invoke("ego-lite:new-tab"),
   newPrivateTab: () => ipcRenderer.invoke("ego-lite:new-private-tab"),

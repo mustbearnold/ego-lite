@@ -101,6 +101,10 @@
         position: relative;
       }
 
+      #sync-menu {
+        position: relative;
+      }
+
       #bookmark-menu summary {
         background: #1f2937;
         border: 1px solid #4b5563;
@@ -150,6 +154,69 @@
 
       #reading-list-menu summary::-webkit-details-marker {
         display: none;
+      }
+
+      #sync-menu summary {
+        background: #1f2937;
+        border: 1px solid #4b5563;
+        border-radius: 6px;
+        color: #e5e7eb;
+        cursor: pointer;
+        font-size: 13px;
+        height: 34px;
+        list-style: none;
+        padding: 8px 10px;
+        white-space: nowrap;
+      }
+
+      #sync-menu summary::-webkit-details-marker {
+        display: none;
+      }
+
+      #sync-list {
+        background: #1f2937;
+        border: 1px solid #4b5563;
+        border-radius: 6px;
+        display: grid;
+        gap: 6px;
+        min-width: 300px;
+        padding: 8px;
+        position: absolute;
+        right: 0;
+        top: 40px;
+        z-index: 10;
+      }
+
+      .sync-row {
+        align-items: center;
+        display: flex;
+        gap: 8px;
+        justify-content: space-between;
+      }
+
+      .sync-row > span {
+        font-size: 12px;
+        min-width: 0;
+      }
+
+      .sync-row input {
+        flex: 0 0 auto;
+        height: 16px;
+        width: 16px;
+      }
+
+      .sync-row select {
+        min-width: 0;
+        width: 110px;
+      }
+
+      #sync-status {
+        color: #d1d5db;
+        font-size: 12px;
+        max-width: 280px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       #group-menu summary {
@@ -637,6 +704,27 @@
       <button id="import-data" type="button" title="Import browser data">
         Import
       </button>
+      <details id="sync-menu">
+        <summary>Sync</summary>
+        <div id="sync-list" role="menu">
+          <label class="sync-row">
+            <span>Keep browser data up to date</span>
+            <input id="sync-enabled" type="checkbox" />
+          </label>
+          <label class="sync-row">
+            <span>Check every</span>
+            <select id="sync-interval" aria-label="Browser sync interval">
+              <option value="15">15 minutes</option>
+              <option value="60">1 hour</option>
+              <option value="360">6 hours</option>
+              <option value="1440">1 day</option>
+            </select>
+          </label>
+          <span id="sync-status" aria-live="polite">Browser sync is off</span>
+          <button id="sync-source" type="button">Choose source…</button>
+          <button id="sync-now" type="button">Sync now</button>
+        </div>
+      </details>
       <details id="profile-menu" hidden>
         <summary>Profile</summary>
         <div id="profile-list" role="menu"></div>
@@ -692,6 +780,11 @@
       const closeTab = document.querySelector("#close-tab");
       const groupTab = document.querySelector("#group-tab");
       const importData = document.querySelector("#import-data");
+      const syncEnabled = document.querySelector("#sync-enabled");
+      const syncInterval = document.querySelector("#sync-interval");
+      const syncStatus = document.querySelector("#sync-status");
+      const syncSource = document.querySelector("#sync-source");
+      const syncNow = document.querySelector("#sync-now");
       const profileMenu = document.querySelector("#profile-menu");
       const profileList = document.querySelector("#profile-list");
       const bookmarkMenu = document.querySelector("#bookmark-menu");
@@ -1159,6 +1252,26 @@
         }
       }
 
+      function applyBrowserSync(sync = {}) {
+        syncEnabled.checked = Boolean(sync.enabled);
+        syncInterval.value = String(sync.intervalMinutes || 15);
+        syncNow.disabled = sync.status === "syncing";
+        syncSource.textContent = sync.sourceName
+          ? `Source · ${sync.sourceName}`
+          : "Choose source…";
+        if (sync.status === "syncing") {
+          syncStatus.textContent = "Syncing browser data…";
+        } else if (sync.status === "error") {
+          syncStatus.textContent = `Sync error · ${sync.message || "check failed"}`;
+        } else if (sync.status === "ready") {
+          syncStatus.textContent = `Synced ${sync.importedBookmarks || 0} bookmarks · ${sync.importedHistory || 0} history entries`;
+        } else if (sync.enabled) {
+          syncStatus.textContent = `On · every ${sync.intervalMinutes || 15} minutes`;
+        } else {
+          syncStatus.textContent = "Browser sync is off";
+        }
+      }
+
       function applyUpdateState(state = {}) {
         const status = state.status;
         if (status === "ready") {
@@ -1193,6 +1306,7 @@
         applyBookmarks(state.bookmarks);
         applyHistory(state.history);
         applyReadingList(state.readingList, state.readingListCanAdd);
+        applyBrowserSync(state.browserSync);
         applyExtensions(state.extensions);
         applyDownloads(state.downloads);
         applySpaces(state.taskSpaces);
@@ -1280,6 +1394,55 @@
         } catch (error) {
           importData.disabled = false;
           status.textContent = error.message;
+        }
+      });
+      syncEnabled.addEventListener("change", async () => {
+        const enabled = syncEnabled.checked;
+        syncEnabled.disabled = true;
+        try {
+          applyState(
+            await window.egoLite.setBrowserSync({
+              enabled,
+              intervalMinutes: Number(syncInterval.value),
+            }),
+          );
+        } catch (error) {
+          syncEnabled.checked = !enabled;
+          status.textContent = error.message;
+        } finally {
+          syncEnabled.disabled = false;
+        }
+      });
+      syncInterval.addEventListener("change", async () => {
+        try {
+          applyState(
+            await window.egoLite.setBrowserSync({
+              enabled: syncEnabled.checked,
+              intervalMinutes: Number(syncInterval.value),
+            }),
+          );
+        } catch (error) {
+          status.textContent = error.message;
+        }
+      });
+      syncSource.addEventListener("click", async () => {
+        syncSource.disabled = true;
+        try {
+          applyState(await window.egoLite.chooseBrowserSyncSource());
+        } catch (error) {
+          status.textContent = error.message;
+        } finally {
+          syncSource.disabled = false;
+        }
+      });
+      syncNow.addEventListener("click", async () => {
+        syncNow.disabled = true;
+        try {
+          applyState(await window.egoLite.syncBrowserData());
+        } catch (error) {
+          status.textContent = error.message;
+        } finally {
+          syncNow.disabled = false;
         }
       });
       window.egoLite.onImportStatus((value) => {

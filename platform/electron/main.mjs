@@ -23,9 +23,17 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import {
   findMigrationProfiles,
+  findSingleMigrationProfile,
   profileLooksUsable,
 } from "./migration-discovery.mjs";
 import { readBookmarks } from "./bookmarks.mjs";
+import {
+  browserSyncDocument,
+  mergeHistoryEntries,
+  normalizeBrowserSyncConfig,
+  readBrowserSourceData,
+  sourceProfileName,
+} from "./browser-sync.mjs";
 import { openDownloadPath } from "./downloads.mjs";
 import {
   historyDocument,
@@ -172,6 +180,7 @@ const extensionCatalog = new Map();
 let bridgeServer;
 let bridgeToken;
 let browserStateSyncTimer;
+let browserDataSyncTimer;
 let windowStateSaveTimer;
 let updateController;
 const downloadStates = new Map();
@@ -199,11 +208,21 @@ const SPACE_SESSION_FILE = "ego-lite-space-session.json";
 const SPACE_SESSION_PATH = join(PROFILE_DIR, SPACE_SESSION_FILE);
 const HISTORY_PATH = join(PROFILE_DIR, "ego-lite-history.json");
 const READING_LIST_PATH = join(PROFILE_DIR, "ego-lite-reading-list.json");
+const BROWSER_SYNC_PATH = join(PROFILE_DIR, "ego-lite-browser-sync.json");
 let sessionSaveTimer;
 let spaceSaveTimer;
 let importRequestPending = false;
 let historyEntries = [];
 let readingListEntries = [];
+let browserSyncConfig;
+let browserSyncBusy = false;
+let browserSyncState = {
+  status: "disabled",
+  message: null,
+  importedBookmarks: 0,
+  importedHistory: 0,
+  lastSyncAt: null,
+};
 
 const permissionAliases = {
   clipboardReadWrite: ["clipboard-read", "clipboard-sanitized-write"],
@@ -242,6 +261,208 @@ function readHistory() {
     return [];
   }
 }
+
+function readBrowserSyncConfig() {
+  try {
+    return normalizeBrowserSyncConfig(
+      JSON.parse(readFileSync(BROWSER_SYNC_PATH, "utf8")),
+    );
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      console.warn(
+        `[ego-lite] could not read browser sync settings: ${error?.message || String(error)}`,
+      );
+    }
+    return normalizeBrowserSyncConfig();
+  }
+}
+
+function writeBrowserSyncConfig() {
+  const temporaryPath = `${BROWSER_SYNC_PATH}.${process.pid}.tmp`;
+  writeFileSync(
+    temporaryPath,
+    `${JSON.stringify(browserSyncDocument(browserSyncConfig), null, 2)}\n`,
+  );
+  renameSync(temporaryPath, BROWSER_SYNC_PATH);
+}
+
+function currentBrowserSync() {
+  return {
+    ...browserSyncConfig,
+    status: browserSyncState.status,
+    message: browserSyncState.message,
+    importedBookmarks: browserSyncState.importedBookmarks,
+    importedHistory: browserSyncState.importedHistory,
+  };
+}
+
+function sourceIsCurrentProfile(sourceProfileDir) {
+  const source = resolve(String(sourceProfileDir || ""));
+  return source === resolve(PROFILE_DIR) || source === resolve(join(PROFILE_DIR, "Default"));
+}
+
+async function resolveBrowserSyncSource() {
+  if (browserSyncConfig.sourceProfileDir) {
+    if (sourceIsCurrentProfile(browserSyncConfig.sourceProfileDir)) {
+      throw new Error("browser sync source must be separate from the ego lite profile");
+    }
+    if (!(await profileLooksUsable(browserSyncConfig.sourceProfileDir))) {
+      throw new Error("configured browser sync profile was not found");
+    }
+    return {
+      profileDir: browserSyncConfig.sourceProfileDir,
+      sourceName:
+        browserSyncConfig.sourceName ||
+        sourceProfileName(browserSyncConfig.sourceProfileDir),
+    };
+  }
+
+  const candidate = await findSingleMigrationProfile();
+  if (!candidate) {
+    throw new Error(
+      "choose one Chromium-family profile before enabling browser sync",
+    );
+  }
+  if (sourceIsCurrentProfile(candidate.profileDir)) {
+    throw new Error("browser sync source must be separate from the ego lite profile");
+  }
+  return {
+    profileDir: candidate.profileDir,
+    sourceName: `${candidate.name} / ${candidate.profileName}`,
+  };
+}
+
+async function runBrowserDataSync({ force = false } = {}) {
+  if (browserSyncBusy) return currentBrowserSync();
+  if (!force && !browserSyncConfig.enabled) return currentBrowserSync();
+  if (!force && browserSyncConfig.lastSyncAt) {
+    const elapsed = Date.now() - Date.parse(browserSyncConfig.lastSyncAt);
+    if (
+      Number.isFinite(elapsed) &&
+      elapsed < browserSyncConfig.intervalMinutes * 60 * 1000
+    ) {
+      return currentBrowserSync();
+    }
+  }
+
+  browserSyncBusy = true;
+  browserSyncState = {
+    ...browserSyncState,
+    status: "syncing",
+    message: null,
+  };
+  publishBrowserState();
+  try {
+    const source = await resolveBrowserSyncSource();
+    const data = await readBrowserSourceData(source.profileDir);
+    const nextBookmarks = data.bookmarks ?? bookmarks;
+    const nextHistory = data.history
+      ? mergeHistoryEntries(historyEntries, data.history)
+      : historyEntries;
+    const historyChanged = JSON.stringify(nextHistory) !== JSON.stringify(historyEntries);
+    bookmarks = nextBookmarks;
+    if (historyChanged) {
+      historyEntries = nextHistory;
+      writeHistory();
+    }
+    browserSyncConfig = normalizeBrowserSyncConfig({
+      ...browserSyncConfig,
+      sourceProfileDir: source.profileDir,
+      sourceName: source.sourceName,
+      lastSyncAt: new Date().toISOString(),
+    });
+    writeBrowserSyncConfig();
+    browserSyncState = {
+      ...browserSyncState,
+      status: "ready",
+      message: null,
+      importedBookmarks: data.bookmarks?.length || 0,
+      importedHistory: data.history?.length || 0,
+      lastSyncAt: browserSyncConfig.lastSyncAt,
+    };
+    publishBrowserState();
+    return currentBrowserSync();
+  } catch (error) {
+    browserSyncState = {
+      ...browserSyncState,
+      status: "error",
+      message: String(error?.message || error || "browser sync failed").slice(
+        0,
+        240,
+      ),
+    };
+    publishBrowserState();
+    if (force) throw error;
+    return currentBrowserSync();
+  } finally {
+    browserSyncBusy = false;
+  }
+}
+
+async function setBrowserSync({ enabled, intervalMinutes } = {}) {
+  browserSyncConfig = normalizeBrowserSyncConfig({
+    ...browserSyncConfig,
+    ...(enabled === undefined ? {} : { enabled: Boolean(enabled) }),
+    ...(intervalMinutes === undefined ? {} : { intervalMinutes }),
+  });
+  writeBrowserSyncConfig();
+  if (!browserSyncConfig.enabled) {
+    browserSyncState = {
+      ...browserSyncState,
+      status: "disabled",
+      message: null,
+    };
+    publishBrowserState();
+    return currentBrowserSync();
+  }
+  return runBrowserDataSync({ force: true });
+}
+
+async function chooseBrowserSyncSource() {
+  const selection = await dialog.showOpenDialog(mainWindow, {
+    title: "Choose browser profile to sync",
+    buttonLabel: "Use profile",
+    properties: ["openDirectory"],
+    message: "Choose a Chromium, Chrome, or Brave profile directory.",
+  });
+  if (selection.canceled || selection.filePaths.length === 0) {
+    return currentBrowserSync();
+  }
+
+  const selected = resolve(selection.filePaths[0]);
+  let profileDir = selected;
+  let sourceName = sourceProfileName(selected);
+  if (!(await profileLooksUsable(selected))) {
+    const candidates = await findMigrationProfiles([
+      { name: "Selected browser", userDataDir: selected },
+    ]);
+    if (candidates.length !== 1) {
+      throw new Error(
+        "choose a specific Chromium-family profile directory with Bookmarks or History",
+      );
+    }
+    profileDir = candidates[0].profileDir;
+    sourceName = `${candidates[0].name} / ${candidates[0].profileName}`;
+  }
+  if (sourceIsCurrentProfile(profileDir)) {
+    throw new Error("browser sync source must be separate from the ego lite profile");
+  }
+  browserSyncConfig = normalizeBrowserSyncConfig({
+    ...browserSyncConfig,
+    sourceProfileDir: profileDir,
+    sourceName,
+  });
+  writeBrowserSyncConfig();
+  publishBrowserState();
+  return currentBrowserSync();
+}
+
+browserSyncConfig = readBrowserSyncConfig();
+browserSyncState = {
+  ...browserSyncState,
+  status: browserSyncConfig.enabled ? "idle" : "disabled",
+  lastSyncAt: browserSyncConfig.lastSyncAt,
+};
 
 function writeHistory() {
   const temporaryPath = `${HISTORY_PATH}.${process.pid}.tmp`;
@@ -742,6 +963,7 @@ function currentBrowserState() {
     history: currentHistory(),
     readingList: currentReadingList(),
     readingListCanAdd: readingListCanAdd(),
+    browserSync: currentBrowserSync(),
     downloads: currentDownloads(),
     extensions: currentExtensions(),
     taskSpaces: currentTaskSpaces(),
@@ -2504,6 +2726,16 @@ ipcMain.handle("ego-lite:close-find", () => {
   return { closed: true };
 });
 ipcMain.handle("ego-lite:import-data", () => requestProfileImport());
+ipcMain.handle("ego-lite:get-browser-sync", () => currentBrowserSync());
+ipcMain.handle("ego-lite:set-browser-sync", (_event, value) =>
+  setBrowserSync(value || {}),
+);
+ipcMain.handle("ego-lite:choose-browser-sync-source", () =>
+  chooseBrowserSyncSource(),
+);
+ipcMain.handle("ego-lite:sync-browser-data", () =>
+  runBrowserDataSync({ force: true }),
+);
 ipcMain.handle("ego-lite:switch-profile", (_event, value) => {
   const id = String(value?.id || "").trim().toLowerCase();
   if (!/^[a-z0-9][a-z0-9_-]{0,39}$/.test(id)) {
@@ -2608,6 +2840,13 @@ if (!hasSingleInstance) {
     }
     await createWindow();
     await startBridge();
+    if (!CLI_MODE) {
+      void runBrowserDataSync();
+      browserDataSyncTimer = setInterval(
+        () => void runBrowserDataSync(),
+        60 * 1000,
+      );
+    }
     void startAutoUpdater();
   });
 
@@ -2621,6 +2860,7 @@ if (!hasSingleInstance) {
     if (windowStateSaveTimer) clearTimeout(windowStateSaveTimer);
     windowStateSaveTimer = undefined;
     if (browserStateSyncTimer) clearInterval(browserStateSyncTimer);
+    if (browserDataSyncTimer) clearInterval(browserDataSyncTimer);
     saveWindowStateSync();
     savePrimarySessionSync();
     saveSpaceSessionSync();

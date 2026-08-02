@@ -22,6 +22,8 @@
     "test:agent-visuals": "xvfb-run --auto-servernum node test/agent-visuals.mjs",
     "test:bookmarks": "node test/bookmarks.mjs",
     "test:background-space": "xvfb-run --auto-servernum node test/background-space.mjs",
+    "test:browser-sync": "node test/browser-sync.mjs",
+    "test:browser-sync-electron": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/browser-data-sync.mjs",
     "test:cookie-parity": "npm run build:sdk && xvfb-run --auto-servernum node test/cookie-inheritance.mjs",
     "test:cdp-boundary": "npm run build:sdk && ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/cdp-boundary.mjs",
     "test:devtools": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/devtools.mjs",
@@ -72,6 +74,7 @@
     "files": [
       "main.mjs",
       "bookmarks.mjs",
+      "browser-sync.mjs",
       "downloads.mjs",
       "history.mjs",
       "migration-discovery.mjs",

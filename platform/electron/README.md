@@ -44,6 +44,12 @@ The toolbar’s Import button provides the repeatable Settings → Import data p
 
 The Profile menu keeps the existing default profile at `~/.local/share/ego-lite/chromium-profile`, stores additional profiles under `~/.local/share/ego-lite/profiles/`, and restarts into the selected profile. Each profile has independent browser data, task-space state, extensions, tabs, and window state; new profiles start empty and can use Import data later.
 
+The Sync menu can keep supported browser data up to date from a separate Chromium-family profile. Choose a source profile, enable the periodic check, or run a one-time sync; bookmarks are refreshed and HTTP(S) history is merged by most-recent visit. The source is read-only and the sync is opt-in. The detached probe covers automatic startup sync, DOM state, manual refresh, and disabling:
+
+```bash
+npm run test:browser-sync-electron
+```
+
 Use `--server-name NAME` or `EGO_LITE_SERVER_NAME` when more than one browser instance needs to run at once. Named instances use an isolated `servers/NAME` data, state, and bridge namespace; the default instance keeps the existing paths for backwards compatibility. Pass the same name to the packaged CLI to reconnect to the matching instance.
 
 Agent-created task tabs stay in the background by default, so creating or navigating a Space does not replace the user’s visible tab. Use the toolbar’s tab picker to inspect or reveal a Space explicitly.
