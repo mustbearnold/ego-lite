@@ -52,7 +52,7 @@ sh skills/ego-browser/scripts/install.sh
 
 The installer builds the SDK, installs a user-local host under `~/.local/share/ego-lite`, adds `ego-browser` and `ego-lite` to `~/.local/bin`, and registers a desktop launcher. Use `EGO_LITE_HEADLESS=1` for CI or a headless machine. See [`platform/linux/README.md`](platform/linux/README.md) for Linux-specific behavior and environment variables.
 
-For a self-contained desktop package with embedded Chromium, run `npm install` and `npm run package:appimage` from [`platform/electron/`](platform/electron/). The packaged executable accepts `--cli` and includes the Linux host, SDK, and skill resources.
+For a self-contained desktop package with embedded Chromium, run `npm install` and `npm run package:linux` from [`platform/electron/`](platform/electron/). This builds an AppImage, Debian package, and RPM; the packaged executable accepts `--cli` and includes the Linux host, SDK, and skill resources.
 
 **1.3 Add the skill with npx**
 

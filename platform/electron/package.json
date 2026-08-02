@@ -2,7 +2,13 @@
   "name": "ego-lite-electron",
   "version": "0.1.0",
   "description": "Electron desktop package for the ego lite Linux host",
-  "author": "ego lite contributors",
+  "author": {
+    "name": "ego lite contributors",
+    "email": "contact@citrolabs.ai",
+    "url": "https://github.com/mustbearnold/ego-lite-linux"
+  },
+  "homepage": "https://github.com/mustbearnold/ego-lite-linux",
+  "license": "MIT",
   "desktopName": "ego-lite",
   "private": true,
   "type": "module",
@@ -11,7 +17,8 @@
     "build:sdk": "npm --prefix ../../package/ego-browser run build",
     "start": "electron .",
     "package:dir": "npm run build:sdk && electron-builder --linux dir",
-    "package:appimage": "npm run build:sdk && electron-builder --linux AppImage"
+    "package:appimage": "npm run build:sdk && electron-builder --linux AppImage",
+    "package:linux": "npm run build:sdk && electron-builder --linux"
   },
   "devDependencies": {
     "electron": "43.2.0",
@@ -59,9 +66,22 @@
           "arch": [
             "x64"
           ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "rpm",
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "category": "Network;WebBrowser;",
+      "maintainer": "ego lite contributors <contact@citrolabs.ai>",
       "synopsis": "Chromium browser for human and AI-agent workflows",
       "description": "Electron desktop package for the ego lite Linux host",
       "syncDesktopName": true,

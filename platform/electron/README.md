@@ -26,6 +26,14 @@ Build a portable AppImage:
 npm run package:appimage
 ```
 
-The package includes the Linux host, built SDK, and `ego-browser` skill under its resources. The packaged executable also accepts `--cli`, so a smoke check can use `ego-lite --cli --doctor` or run the SDK through `ego-lite --cli nodejs`. AppImage artifacts are written to `platform/electron/dist/`.
+Build the full x64 Linux distribution set (AppImage, Debian package, and RPM):
+
+```bash
+npm run package:linux
+```
+
+The RPM target requires `rpmbuild`: install `rpm-tools` on Arch-based systems or `rpm` on Debian/Ubuntu.
+
+The package includes the Linux host, built SDK, and `ego-browser` skill under its resources. The packaged executable also accepts `--cli`, so a smoke check can use `ego-lite --cli --doctor` or run the SDK through `ego-lite --cli nodejs`. Linux artifacts are written to `platform/electron/dist/`.
 
 Do not run the Electron package and the standalone Linux host against the same profile at the same time. Set `EGO_LITE_PROFILE_DIR` to use a separate profile.

@@ -25,13 +25,13 @@ EGO_LITE_HEADLESS=1 node platform/linux/ego-browser.mjs --doctor
 ```
 
 For an embedded Chromium desktop package, use the Electron project in
-`platform/electron`. It produces an unpacked Linux app or a portable AppImage
-and includes the host, SDK, and skill resources.
+`platform/electron`. It produces an unpacked Linux app plus AppImage, Debian,
+and RPM artifacts and includes the host, SDK, and skill resources.
 
 ```bash
 cd platform/electron
 npm install
-npm run package:appimage
+npm run package:linux
 ```
 
 ## Runtime configuration

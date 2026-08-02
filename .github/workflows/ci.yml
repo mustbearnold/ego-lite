@@ -26,9 +26,39 @@ jobs:
       - run: npm test
       - run: npm run validate:site-skills
 
+  linux-package:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package/ego-browser/package-lock.json
+            platform/electron/package-lock.json
+      - name: Install SDK dependencies
+        run: npm ci --prefix package/ego-browser
+      - name: Install Electron dependencies
+        run: npm ci --prefix platform/electron
+      - name: Install RPM tooling
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y rpm
+      - name: Build Linux packages
+        run: npm run package:linux --prefix platform/electron
+      - name: Upload Linux packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: ego-lite-linux-packages
+          path: platform/electron/dist/ego-lite-*
+          if-no-files-found: error
+          retention-days: 14
+
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: test
+    needs:
+      - test
+      - linux-package
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -45,6 +75,10 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: package/ego-browser/package-lock.json
+      - uses: actions/download-artifact@v4
+        with:
+          name: ego-lite-linux-packages
+          path: platform/electron/dist
       - run: npm ci
       - run: npm run build
       - name: Resolve release channel
@@ -146,3 +180,5 @@ jobs:
               "${release_args[@]}" \
               "$artifact"
           fi
+
+          gh release upload "$release_tag" platform/electron/dist/ego-lite-* --clobber
