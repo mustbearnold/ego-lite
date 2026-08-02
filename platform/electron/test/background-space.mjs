@@ -230,6 +230,24 @@ try {
     spaceId: 1,
     label: "Running background parity",
   });
+  const primaryStatus = await waitFor(
+    "background status stays out of primary toolbar",
+    async () => {
+      const status = String(
+        await evaluate(
+          connection,
+          attached.sessionId,
+          "document.querySelector('#status')?.textContent || ''",
+        ),
+      );
+      return { status };
+    },
+  );
+  if (primaryStatus.status.includes("Running background parity")) {
+    throw new Error(
+      `background task status leaked into the primary toolbar: ${primaryStatus.status}`,
+    );
+  }
   const spaceStatus = await waitFor("Space running status", async () => {
     const labels = await evaluate(
       connection,
@@ -253,6 +271,16 @@ try {
       `explicit task reveal left the primary visible: ${JSON.stringify(revealed)}`,
     );
   }
+  const revealedStatus = await waitFor("revealed task status", async () => {
+    const status = String(
+      await evaluate(
+        connection,
+        attached.sessionId,
+        "document.querySelector('#status')?.textContent || ''",
+      ),
+    );
+    return status.includes("Running background parity") ? status : null;
+  });
 
   await bridgeRequest(bridge, "/close-tab", { targetId: created.targetId });
   const restored = await waitFor("primary tab restore", async () => {
@@ -268,6 +296,8 @@ try {
       backgroundSpaceName: backgroundTask.spaceName,
       backgroundActive: backgroundTask.active,
       spaceStatus,
+      primaryStatus: primaryStatus.status,
+      revealedStatus,
       restoredPrimaryActive: Boolean(
         restored.tabs.find((tab) => tab.targetId === primary.targetId)?.active,
       ),

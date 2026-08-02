@@ -187,7 +187,6 @@ let updateState = {
   message: null,
 };
 let bookmarks = [];
-let agentTaskState = null;
 const agentTaskStates = new Map();
 const bridgeFile = join(PROFILE_DIR, "ego-lite-bridge.json");
 const MIGRATION_PROMPT_MARKER = join(PROFILE_DIR, ".migration-prompted");
@@ -725,6 +724,11 @@ function currentControlState() {
 }
 
 function currentBrowserState() {
+  const active = managedRecordForView(browserView);
+  const activeTaskState =
+    active?.spaceId === null || active?.spaceId === undefined
+      ? null
+      : agentTaskStates.get(active.spaceId) || null;
   return {
     title: browserView?.webContents.getTitle() || "ego lite",
     url: browserView?.webContents.getURL() || "about:blank",
@@ -732,7 +736,7 @@ function currentBrowserState() {
     serverName: SERVER_NAME,
     fullscreen: Boolean(mainWindow?.isFullScreen()),
     profiles: currentProfiles(),
-    agentTaskState,
+    agentTaskState: activeTaskState,
     controlState: currentControlState(),
     bookmarks,
     history: currentHistory(),
@@ -1723,10 +1727,9 @@ async function handleBridgeRequest(pathname, body) {
       if (normalized) agentTaskStates.set(spaceId, normalized);
       else agentTaskStates.delete(spaceId);
     }
-    agentTaskState = normalized;
     publishBrowserState();
     return {
-      agentTaskState,
+      agentTaskState: normalized,
       spaceId: Number.isInteger(spaceId) && spaceId >= 0 ? spaceId : null,
       taskState: normalized,
     };
