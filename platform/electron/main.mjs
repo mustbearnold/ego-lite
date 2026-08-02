@@ -1,4 +1,4 @@
-import { app, BrowserView, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserView, BrowserWindow, ipcMain, session } from "electron";
 import { mkdirSync } from "node:fs";
 import { unlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -187,6 +187,59 @@ function updatePermissionRules(state, origin, permissions, setting) {
   }
 }
 
+function cookieUrl(cookie) {
+  const domain = String(cookie.domain || "").replace(/^\./, "");
+  if (!domain) return null;
+  const protocol = cookie.secure ? "https" : "http";
+  const path = String(cookie.path || "/").startsWith("/")
+    ? cookie.path
+    : `/${cookie.path}`;
+  return `${protocol}://${domain}${path}`;
+}
+
+async function inheritPrimaryCookies(targetSession) {
+  if (targetSession === session.defaultSession) return;
+
+  const [sourceCookies, targetCookies] = await Promise.all([
+    session.defaultSession.cookies.get({}),
+    targetSession.cookies.get({}),
+  ]);
+  if (sourceCookies.length === 0 || targetCookies.length > 0) return;
+
+  let copied = 0;
+  let failed = 0;
+  for (const cookie of sourceCookies) {
+    const url = cookieUrl(cookie);
+    if (!url) continue;
+    try {
+      await targetSession.cookies.set({
+        url,
+        name: cookie.name,
+        value: cookie.value,
+        ...(cookie.domain && !cookie.hostOnly ? { domain: cookie.domain } : {}),
+        ...(cookie.path ? { path: cookie.path } : {}),
+        ...(cookie.secure !== undefined ? { secure: cookie.secure } : {}),
+        ...(cookie.httpOnly !== undefined ? { httpOnly: cookie.httpOnly } : {}),
+        ...(cookie.expirationDate
+          ? { expirationDate: cookie.expirationDate }
+          : {}),
+        ...(cookie.sameSite ? { sameSite: cookie.sameSite } : {}),
+      });
+      copied += 1;
+    } catch (error) {
+      failed += 1;
+      console.warn(
+        `[ego-lite] could not inherit cookie ${cookie.name}: ${error?.message || String(error)}`,
+      );
+    }
+  }
+  if (copied > 0 || failed > 0) {
+    console.log(
+      `[ego-lite] inherited ${copied} primary-session cookie(s) into task space${failed ? `; ${failed} failed` : ""}`,
+    );
+  }
+}
+
 function applyPermissionCommand({ targetId, method, params = {} }) {
   const managed = managedViews.get(targetId);
   if (!managed) throw new Error(`Electron target not found: ${targetId}`);
@@ -243,6 +296,7 @@ async function createManagedView({ spaceId, url = "about:blank" }) {
     },
   });
   enableAccessibility(view);
+  await inheritPrimaryCookies(view.webContents.session);
   view.webContents.setWindowOpenHandler(({ url: openedUrl }) => {
     void navigateOnView(view, openedUrl).catch((error) => {
       console.error(`[ego-lite] cannot open ${openedUrl}: ${error.message}`);

@@ -80,5 +80,7 @@ test-e2e/
 test/
 !package/ego-browser/test/
 !package/ego-browser/test/*.test.js
+!platform/electron/test/
+!platform/electron/test/*.mjs
 # Translated skill (local only)
 skills/ego-browser/SKILL.zh.md

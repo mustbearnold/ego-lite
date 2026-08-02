@@ -16,6 +16,7 @@
   "scripts": {
     "build:sdk": "npm --prefix ../../package/ego-browser run build",
     "start": "electron .",
+    "test:cookie-parity": "npm run build:sdk && xvfb-run --auto-servernum node test/cookie-inheritance.mjs",
     "package:dir": "npm run build:sdk && electron-builder --linux dir",
     "package:appimage": "npm run build:sdk && electron-builder --linux AppImage",
     "package:linux": "npm run build:sdk && electron-builder --linux"
