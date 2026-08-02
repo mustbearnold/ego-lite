@@ -470,6 +470,8 @@ try {
             groupCount: document.querySelectorAll("#tab-picker optgroup").length,
             labels: [...document.querySelectorAll("#tab-picker optgroup")].map((node) => node.label),
             optionCount: document.querySelectorAll("#tab-picker option").length,
+            groupMenuVisible: !document.querySelector("#group-menu").hidden,
+            groupButton: document.querySelector("#group-list button")?.getAttribute("aria-checked") || "",
           }))()`,
         );
         return value?.groupCount === 1 && value.optionCount >= 2 ? value : null;
@@ -477,15 +479,48 @@ try {
       if (
         !dom.labels[0].includes("Migration fixture") ||
         !dom.labels[0].includes("blue") ||
-        !dom.labels[0].includes("collapsed")
+        !dom.labels[0].includes("collapsed") ||
+        !dom.groupMenuVisible ||
+        dom.groupButton !== "false"
       ) {
         throw new Error(`group label mismatch: ${JSON.stringify(dom)}`);
       }
+      await evaluate(
+        connection,
+        attached.sessionId,
+        `document.querySelector("#group-list button")?.click(); true`,
+      );
+      const expanded = await waitFor("expanded group control", async () => {
+        const value = await evaluate(
+          connection,
+          attached.sessionId,
+          `(() => ({
+            checked: document.querySelector("#group-list button")?.getAttribute("aria-checked") || "",
+            label: document.querySelector("#tab-picker optgroup")?.label || "",
+          }))()`,
+        );
+        return value?.checked === "true" ? value : null;
+      });
+      const persistedGroups = await waitFor(
+        "persisted group expansion",
+        async () => {
+          try {
+            const manifest = JSON.parse(
+              await readFile(join(targetUserData, "ego-lite-session.json"), "utf8"),
+            );
+            return manifest.groups?.some((group) => !group.collapsed)
+              ? manifest.groups
+              : null;
+          } catch {
+            return null;
+          }
+        },
+      );
       console.log(
         JSON.stringify({
           reportTabs: report.tabs,
           restoredUrls: restoredTabs.map((tab) => tab.url).sort(),
-          toolbar: dom,
+          toolbar: { ...dom, expanded, persistedGroups },
         }),
       );
     } finally {

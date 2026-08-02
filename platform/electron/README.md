@@ -72,7 +72,7 @@ The password-migration probe verifies that basic plaintext data is eligible whil
 npm run test:password-migration
 ```
 
-Migration also captures restorable HTTP(S) tabs and Chromium tab-group metadata through a temporary isolated MV3 probe. The Electron shell recreates those tabs in the primary browser picker and retains each group's title, color, and collapsed marker. Browser-internal pages and keyring-backed passwords remain excluded. The detached restoration and toolbar DOM probe is:
+Migration also captures restorable HTTP(S) tabs and Chromium tab-group metadata through a temporary isolated MV3 probe. The Electron shell recreates those tabs in the primary browser picker, exposes an accessible Groups control for expanding/collapsing them, and persists each group's title, color, and collapsed state. Browser-internal pages and keyring-backed passwords remain excluded. The detached restoration and toolbar DOM probe is:
 
 ```bash
 npm run test:migrated-tabs

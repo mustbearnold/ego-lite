@@ -84,6 +84,50 @@
         padding: 0 8px;
       }
 
+      #group-menu {
+        position: relative;
+      }
+
+      #group-menu summary {
+        background: #1f2937;
+        border: 1px solid #4b5563;
+        border-radius: 6px;
+        color: #e5e7eb;
+        cursor: pointer;
+        font-size: 13px;
+        height: 34px;
+        list-style: none;
+        padding: 8px 10px;
+        white-space: nowrap;
+      }
+
+      #group-menu summary::-webkit-details-marker {
+        display: none;
+      }
+
+      #group-list {
+        background: #1f2937;
+        border: 1px solid #4b5563;
+        border-radius: 6px;
+        display: grid;
+        gap: 4px;
+        min-width: 220px;
+        padding: 6px;
+        position: absolute;
+        right: 0;
+        top: 40px;
+        z-index: 10;
+      }
+
+      #group-list button {
+        font-size: 12px;
+        overflow: hidden;
+        text-align: left;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        width: 100%;
+      }
+
       #status {
         color: #9ca3af;
         font-size: 12px;
@@ -112,6 +156,10 @@
         Import
       </button>
       <select id="tab-picker" aria-label="Open tab"></select>
+      <details id="group-menu" hidden>
+        <summary>Groups</summary>
+        <div id="group-list" role="menu"></div>
+      </details>
       <span id="status">ready</span>
     </div>
     <script>
@@ -121,6 +169,8 @@
       const forward = document.querySelector("#forward");
       const importData = document.querySelector("#import-data");
       const tabPicker = document.querySelector("#tab-picker");
+      const groupMenu = document.querySelector("#group-menu");
+      const groupList = document.querySelector("#group-list");
 
       function tabLabel(tab) {
         const space =
@@ -144,17 +194,44 @@
             tabPicker.append(option);
             continue;
           }
-          let groupOptions = groups.get(group.id);
-          if (!groupOptions) {
-            groupOptions = document.createElement("optgroup");
+          option.hidden = Boolean(group.collapsed && !tab.active);
+          let groupEntry = groups.get(group.id);
+          if (!groupEntry) {
+            const groupOptions = document.createElement("optgroup");
             const suffix = group.collapsed ? " (collapsed)" : "";
             groupOptions.label = `${group.title || "Tab group"} · ${group.color || "grey"}${suffix}`;
-            groups.set(group.id, groupOptions);
+            groupEntry = { element: groupOptions, data: group };
+            groups.set(group.id, groupEntry);
             tabPicker.append(groupOptions);
           }
-          groupOptions.append(option);
+          groupEntry.element.append(option);
         }
         tabPicker.disabled = tabs.length < 2;
+        groupList.replaceChildren();
+        groupMenu.hidden = groups.size === 0;
+        for (const { data: group } of groups.values()) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.setAttribute("role", "menuitemcheckbox");
+          button.setAttribute("aria-checked", String(!group.collapsed));
+          button.setAttribute(
+            "aria-label",
+            `${group.title || "Tab group"} ${group.collapsed ? "collapsed" : "expanded"}`,
+          );
+          button.textContent = `${group.title || "Tab group"} · ${group.color || "grey"}${group.collapsed ? " (collapsed)" : ""}`;
+          button.addEventListener("click", async () => {
+            try {
+              await window.egoLite.setTabGroup({
+                id: group.id,
+                collapsed: !group.collapsed,
+              });
+              applyState(await window.egoLite.getBrowserState());
+            } catch (error) {
+              status.textContent = error.message;
+            }
+          });
+          groupList.append(button);
+        }
       }
 
       function applyState(state) {

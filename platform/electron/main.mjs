@@ -640,6 +640,24 @@ function managedViewForTarget(targetId) {
   return browserView || null;
 }
 
+function updateTabGroup({ id, collapsed }) {
+  if (typeof id !== "string" || !id) {
+    throw new Error("tab group id is required");
+  }
+  let updated = 0;
+  for (const managed of managedViews.values()) {
+    if (managed.spaceId !== null || managed.tabGroup?.id !== id) continue;
+    managed.tabGroup = {
+      ...managed.tabGroup,
+      collapsed: Boolean(collapsed),
+    };
+    updated += 1;
+  }
+  if (updated === 0) throw new Error(`tab group not found: ${id}`);
+  publishBrowserState();
+  return managedTabState();
+}
+
 async function highlightAgentPointer({ targetId, x, y }) {
   const view = managedViewForTarget(targetId);
   const point = { x: Number(x), y: Number(y) };
@@ -1243,6 +1261,9 @@ ipcMain.handle("ego-lite:forward", () => {
 });
 ipcMain.handle("ego-lite:reload", () => browserView?.webContents.reload());
 ipcMain.handle("ego-lite:import-data", () => requestProfileImport());
+ipcMain.handle("ego-lite:set-tab-group", (_event, value) =>
+  updateTabGroup(value || {}),
+);
 ipcMain.handle("ego-lite:list-tabs", () => managedTabState());
 ipcMain.handle("ego-lite:activate-tab", (_event, targetId) => {
   const managed = managedViews.get(targetId);
