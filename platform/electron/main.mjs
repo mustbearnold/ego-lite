@@ -36,7 +36,7 @@ import {
   browserSyncDocument,
   mergeHistoryEntries,
   normalizeBrowserSyncConfig,
-  readBrowserSourceData,
+  readBrowserSourceDataInWorker,
   sourceProfileName,
 } from "./browser-sync.mjs";
 import { openDownloadPath } from "./downloads.mjs";
@@ -419,7 +419,7 @@ async function runBrowserDataSync({ force = false } = {}) {
   publishBrowserState();
   try {
     const source = await resolveBrowserSyncSource();
-    const data = await readBrowserSourceData(source.profileDir);
+    const data = await readBrowserSourceDataInWorker(source.profileDir);
     const nextBookmarks = data.bookmarks ?? bookmarks;
     const nextHistory = data.history
       ? mergeHistoryEntries(historyEntries, data.history)

@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
+import { Worker } from "node:worker_threads";
 import { readBookmarks, readBookmarksDocument } from "./bookmarks.mjs";
 import { normalizeHistory } from "./history.mjs";
 
@@ -98,6 +99,40 @@ export async function readBrowserSourceData(profileDir) {
     bookmarks: existsSync(bookmarksPath) ? readBookmarks(bookmarksPath) : null,
     history: await readChromiumHistory(historyPath),
   };
+}
+
+export function readBrowserSourceDataInWorker(profileDir) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const worker = new Worker(new URL("./browser-sync-worker.mjs", import.meta.url), {
+      type: "module",
+      workerData: { profileDir },
+    });
+    let settled = false;
+    const settle = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      callback(value);
+    };
+    worker.once("message", (message) => {
+      if (message?.ok) settle(resolvePromise, message.data);
+      else {
+        settle(
+          rejectPromise,
+          new Error(message?.error || "browser source worker failed"),
+        );
+      }
+      void worker.terminate();
+    });
+    worker.once("error", (error) => settle(rejectPromise, error));
+    worker.once("exit", (code) => {
+      if (code !== 0) {
+        settle(
+          rejectPromise,
+          new Error(`browser source worker exited with code ${code}`),
+        );
+      }
+    });
+  });
 }
 
 function historyTimestamp(entry) {

@@ -50,7 +50,7 @@ The toolbar’s Import button provides the repeatable Settings → Import data p
 
 The Profile menu keeps the existing default profile at `~/.local/share/ego-lite/chromium-profile`, stores additional profiles under `~/.local/share/ego-lite/profiles/`, and restarts into the selected profile. Each profile has independent browser data, task-space state, extensions, tabs, and window state; new profiles start empty and can use Import data later.
 
-The Sync menu can keep supported browser data up to date from a separate Chromium-family profile. Choose a source profile, enable the periodic check, or run a one-time sync; bookmarks are refreshed and HTTP(S) history is merged by most-recent visit. The source is read-only and the sync is opt-in. The detached probe covers automatic startup sync, DOM state, manual refresh, and disabling:
+The Sync menu can keep supported browser data up to date from a separate Chromium-family profile. Choose a source profile, enable the periodic check, or run a one-time sync; bookmarks are refreshed and HTTP(S) history is merged by most-recent visit. The source is read-only, the sync is opt-in, and its filesystem/SQLite read runs in a worker so the Electron UI thread stays responsive. The detached probe covers automatic startup sync, DOM state, manual refresh, and disabling:
 
 ```bash
 npm run test:browser-sync-electron

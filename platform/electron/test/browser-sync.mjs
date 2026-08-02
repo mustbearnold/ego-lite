@@ -7,6 +7,7 @@ import {
   mergeHistoryEntries,
   normalizeBrowserSyncConfig,
   readBrowserSourceData,
+  readBrowserSourceDataInWorker,
 } from "../browser-sync.mjs";
 
 const fixtureDir = await mkdtemp(join(tmpdir(), "ego-browser-sync-"));
@@ -61,6 +62,13 @@ try {
   );
   assert.equal(source.history[0].visitedAt, "2026-08-02T10:00:00.000Z");
 
+  const workerSource = await readBrowserSourceDataInWorker(fixtureDir);
+  assert.equal(workerSource.bookmarks.length, 1);
+  assert.deepEqual(
+    workerSource.history.map((entry) => entry.url),
+    source.history.map((entry) => entry.url),
+  );
+
   const merged = mergeHistoryEntries(
     [
       {
@@ -95,6 +103,7 @@ try {
     JSON.stringify({
       bookmarks: source.bookmarks.length,
       history: source.history.length,
+      workerHistory: workerSource.history.length,
       merged: merged.length,
       intervalMinutes: config.intervalMinutes,
     }),
