@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
-import { parseBookmarksDocument } from "../bookmarks.mjs";
+import {
+  addBookmarkToDocument,
+  parseBookmarksDocument,
+  removeBookmarkFromDocument,
+} from "../bookmarks.mjs";
 
 const bookmarks = parseBookmarksDocument({
   roots: {
@@ -70,5 +74,33 @@ assert.deepEqual(bookmarks, [
     folder: "Synced",
   },
 ]);
+
+const added = addBookmarkToDocument(
+  { roots: {} },
+  {
+    url: "https://new.example/",
+    name: "New bookmark",
+    dateAdded: Date.parse("2026-08-02T00:00:00.000Z"),
+  },
+);
+assert.equal(added.added, true);
+assert.deepEqual(parseBookmarksDocument(added.document), [
+  {
+    id: added.bookmark.id,
+    name: "New bookmark",
+    url: "https://new.example/",
+    folder: "Bookmarks bar",
+  },
+]);
+assert.equal(
+  addBookmarkToDocument(added.document, {
+    url: "https://new.example/",
+    name: "Duplicate",
+  }).added,
+  false,
+);
+const removed = removeBookmarkFromDocument(added.document, "https://new.example/");
+assert.equal(removed.removed, 1);
+assert.deepEqual(parseBookmarksDocument(removed.document), []);
 
 console.log(JSON.stringify({ count: bookmarks.length, bookmarks }));

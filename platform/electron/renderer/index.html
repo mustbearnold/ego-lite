@@ -684,6 +684,9 @@
           value="about:blank"
         />
       </form>
+      <button id="bookmark-page" type="button" title="Bookmark page" aria-label="Bookmark page">
+        ☆
+      </button>
       <button id="new-tab" type="button" title="New tab" aria-label="New tab">
         +
       </button>
@@ -779,6 +782,7 @@
       const newPrivateTab = document.querySelector("#new-private-tab");
       const closeTab = document.querySelector("#close-tab");
       const groupTab = document.querySelector("#group-tab");
+      const bookmarkPage = document.querySelector("#bookmark-page");
       const importData = document.querySelector("#import-data");
       const syncEnabled = document.querySelector("#sync-enabled");
       const syncInterval = document.querySelector("#sync-interval");
@@ -1302,6 +1306,15 @@
         control.dataset.ownership = controlState.ownership || "user";
         back.disabled = !state.canGoBack;
         forward.disabled = !state.canGoForward;
+        bookmarkPage.disabled = !state.bookmarkCanToggle;
+        bookmarkPage.textContent = state.bookmarked ? "★" : "☆";
+        bookmarkPage.title = state.bookmarked
+          ? "Remove bookmark"
+          : "Bookmark page";
+        bookmarkPage.setAttribute(
+          "aria-label",
+          state.bookmarked ? "Remove bookmark" : "Bookmark page",
+        );
         applyProfiles(state.profiles, state.profileId);
         applyBookmarks(state.bookmarks);
         applyHistory(state.history);
@@ -1382,6 +1395,15 @@
           applyState(await window.egoLite.toggleTabMute());
         } catch (error) {
           muteTab.disabled = false;
+          status.textContent = error.message;
+        }
+      });
+      bookmarkPage.addEventListener("click", async () => {
+        bookmarkPage.disabled = true;
+        try {
+          applyState(await window.egoLite.toggleBookmark());
+        } catch (error) {
+          bookmarkPage.disabled = false;
           status.textContent = error.message;
         }
       });

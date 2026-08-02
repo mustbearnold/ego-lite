@@ -26,7 +26,12 @@ import {
   findSingleMigrationProfile,
   profileLooksUsable,
 } from "./migration-discovery.mjs";
-import { readBookmarks } from "./bookmarks.mjs";
+import {
+  addBookmarkToDocument,
+  readBookmarks,
+  readBookmarksDocument,
+  removeBookmarkFromDocument,
+} from "./bookmarks.mjs";
 import {
   browserSyncDocument,
   mergeHistoryEntries,
@@ -210,6 +215,7 @@ const PENDING_IMPORT_FILE = "ego-lite-pending-import.json";
 const PENDING_IMPORT_PATH = join(PROFILE_DIR, PENDING_IMPORT_FILE);
 const SPACE_SESSION_FILE = "ego-lite-space-session.json";
 const SPACE_SESSION_PATH = join(PROFILE_DIR, SPACE_SESSION_FILE);
+const BOOKMARKS_PATH = join(PROFILE_DIR, "Default", "Bookmarks");
 const HISTORY_PATH = join(PROFILE_DIR, "ego-lite-history.json");
 const READING_LIST_PATH = join(PROFILE_DIR, "ego-lite-reading-list.json");
 const BROWSER_SYNC_PATH = join(PROFILE_DIR, "ego-lite-browser-sync.json");
@@ -264,6 +270,60 @@ function readHistory() {
     }
     return [];
   }
+}
+
+function writeBookmarksDocument(document) {
+  const temporaryPath = `${BOOKMARKS_PATH}.${process.pid}.tmp`;
+  mkdirSync(dirname(BOOKMARKS_PATH), { recursive: true });
+  writeFileSync(temporaryPath, `${JSON.stringify(document, null, 2)}\n`);
+  renameSync(temporaryPath, BOOKMARKS_PATH);
+}
+
+function activeBookmarkTarget() {
+  return [...managedViews.values()].find(
+    (candidate) => candidate.view === browserView,
+  );
+}
+
+function currentBookmarkState() {
+  const active = activeBookmarkTarget();
+  const url = active?.view.webContents.getURL() || "";
+  const canToggle = Boolean(
+    active &&
+      active.spaceId === null &&
+      !active.private &&
+      /^https?:\/\//i.test(url),
+  );
+  return {
+    bookmarkCanToggle: canToggle,
+    bookmarked: canToggle && bookmarks.some((bookmark) => bookmark.url === url),
+  };
+}
+
+function toggleCurrentBookmark() {
+  const active = activeBookmarkTarget();
+  const url = active?.view.webContents.getURL() || "";
+  if (
+    !active ||
+    active.spaceId !== null ||
+    active.private ||
+    !/^https?:\/\//i.test(url)
+  ) {
+    throw new Error("bookmarks are available only for normal HTTP(S) tabs");
+  }
+  const document = readBookmarksDocument(BOOKMARKS_PATH) || { roots: {} };
+  const existing = bookmarks.some((bookmark) => bookmark.url === url);
+  const result = existing
+    ? removeBookmarkFromDocument(document, url)
+    : addBookmarkToDocument(document, {
+        url,
+        name: active.view.webContents.getTitle() || url,
+      });
+  if (!existing && !result.added) throw new Error("could not add bookmark");
+  writeBookmarksDocument(result.document);
+  bookmarks = readBookmarks(BOOKMARKS_PATH);
+  publishBrowserState();
+  return currentBrowserState();
 }
 
 function readBrowserSyncConfig() {
@@ -364,7 +424,8 @@ async function runBrowserDataSync({ force = false } = {}) {
       ? mergeHistoryEntries(historyEntries, data.history)
       : historyEntries;
     const historyChanged = JSON.stringify(nextHistory) !== JSON.stringify(historyEntries);
-    bookmarks = nextBookmarks;
+    if (data.bookmarksDocument) writeBookmarksDocument(data.bookmarksDocument);
+    bookmarks = data.bookmarks !== null ? readBookmarks(BOOKMARKS_PATH) : nextBookmarks;
     if (historyChanged) {
       historyEntries = nextHistory;
       writeHistory();
@@ -960,6 +1021,7 @@ function currentBrowserState() {
     profileId: ACTIVE_PROFILE_ID,
     serverName: SERVER_NAME,
     fullscreen: Boolean(mainWindow?.isFullScreen()),
+    ...currentBookmarkState(),
     profiles: currentProfiles(),
     agentTaskState: activeTaskState,
     controlState: currentControlState(),
@@ -2761,6 +2823,7 @@ ipcMain.handle("ego-lite:close-find", () => {
   return { closed: true };
 });
 ipcMain.handle("ego-lite:import-data", () => requestProfileImport());
+ipcMain.handle("ego-lite:toggle-bookmark", () => toggleCurrentBookmark());
 ipcMain.handle("ego-lite:get-browser-sync", () => currentBrowserSync());
 ipcMain.handle("ego-lite:set-browser-sync", (_event, value) =>
   setBrowserSync(value || {}),

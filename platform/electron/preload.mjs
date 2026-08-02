@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld("egoLite", {
   createProfile: (value) => ipcRenderer.invoke("ego-lite:create-profile", value),
   showDownload: (id) => ipcRenderer.invoke("ego-lite:show-download", id),
   openDownload: (id) => ipcRenderer.invoke("ego-lite:open-download", id),
+  toggleBookmark: () => ipcRenderer.invoke("ego-lite:toggle-bookmark"),
   clearHistory: () => ipcRenderer.invoke("ego-lite:clear-history"),
   addReadingList: () => ipcRenderer.invoke("ego-lite:add-reading-list"),
   removeReadingList: (url) =>

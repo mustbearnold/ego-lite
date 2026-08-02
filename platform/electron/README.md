@@ -68,7 +68,11 @@ The detached URL-routing/CDP probe covers this boundary:
 npm run test:url-routing
 ```
 
-The toolbar exposes bookmarks imported into the Electron profile and a Private tab action. Private tabs use an in-memory Chromium partition, do not inherit the primary tab’s cookies, and are not written to the primary session manifest. `Ctrl/Cmd+Shift+N` opens one from the toolbar or a focused page; `Ctrl/Cmd+T` and `Ctrl/Cmd+W` continue to create and close ordinary tabs.
+The toolbar exposes bookmarks imported into the Electron profile, a bookmark toggle for the current normal HTTP(S) page, and a Private tab action. Bookmark changes are persisted in the active profile and remain separate from private and Agent tabs. Private tabs use an in-memory Chromium partition, do not inherit the primary tab’s cookies, and are not written to the primary session manifest. `Ctrl/Cmd+Shift+N` opens one from the toolbar or a focused page; `Ctrl/Cmd+T` and `Ctrl/Cmd+W` continue to create and close ordinary tabs. The detached bookmark-control probe covers the DOM toggle and profile persistence:
+
+```bash
+npm run test:bookmark-controls
+```
 
 `Ctrl/Cmd+F` opens the native Find in Page bar. It reports the current match count, supports next/previous navigation and Escape/close, and searches the active BrowserView through Chromium’s page-find API. The detached X11/CDP probe covers the shortcut and result navigation:
 

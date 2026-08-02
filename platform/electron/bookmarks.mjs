@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 
 const MAX_BOOKMARKS = 200;
 const MAX_DEPTH = 6;
@@ -46,10 +47,121 @@ export function parseBookmarksDocument(document) {
   return bookmarks;
 }
 
-export function readBookmarks(path) {
+export function readBookmarksDocument(path) {
   try {
-    return parseBookmarksDocument(JSON.parse(readFileSync(path, "utf8")));
+    const document = JSON.parse(readFileSync(path, "utf8"));
+    return document && typeof document === "object" ? document : null;
   } catch {
-    return [];
+    return null;
   }
+}
+
+export function readBookmarks(path) {
+  return parseBookmarksDocument(readBookmarksDocument(path));
+}
+
+function cloneDocument(document) {
+  return JSON.parse(JSON.stringify(document || {}));
+}
+
+function ensureBookmarkBar(document) {
+  const next = cloneDocument(document);
+  if (!next.roots || typeof next.roots !== "object") next.roots = {};
+  if (!next.roots.bookmark_bar || typeof next.roots.bookmark_bar !== "object") {
+    next.roots.bookmark_bar = {
+      children: [],
+      date_added: "0",
+      date_modified: "0",
+      id: "1",
+      name: "Bookmarks bar",
+      type: "folder",
+    };
+  }
+  if (!Array.isArray(next.roots.bookmark_bar.children)) {
+    next.roots.bookmark_bar.children = [];
+  }
+  next.version = Number(next.version) || 1;
+  return next;
+}
+
+function visitNodes(node, callback) {
+  if (!node || typeof node !== "object") return;
+  callback(node);
+  if (Array.isArray(node.children)) {
+    for (const child of node.children) visitNodes(child, callback);
+  }
+}
+
+function nextBookmarkId(document) {
+  let largest = 0;
+  for (const root of Object.values(document.roots || {})) {
+    visitNodes(root, (node) => {
+      const id = Number(node.id);
+      if (Number.isInteger(id)) largest = Math.max(largest, id);
+    });
+  }
+  return String(largest + 1);
+}
+
+function canonicalUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return ALLOWED_PROTOCOLS.has(url.protocol) ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+export function addBookmarkToDocument(
+  document,
+  { url, name, dateAdded = Date.now() } = {},
+) {
+  const canonical = canonicalUrl(url);
+  const title = String(name || "").trim();
+  if (!canonical || !title) return { document: cloneDocument(document), added: false };
+  const next = ensureBookmarkBar(document);
+  const existing = parseBookmarksDocument(next).find(
+    (bookmark) => bookmark.url === canonical,
+  );
+  if (existing) return { document: next, added: false, bookmark: existing };
+  const timestamp = String((Number(dateAdded) + 11644473600000) * 1000);
+  const bookmark = {
+    date_added: timestamp,
+    guid: randomUUID(),
+    id: nextBookmarkId(next),
+    name: title.slice(0, 160),
+    type: "url",
+    url: canonical,
+  };
+  next.roots.bookmark_bar.children.push(bookmark);
+  return {
+    document: next,
+    added: true,
+    bookmark: {
+      id: bookmark.id,
+      name: bookmark.name,
+      url: bookmark.url,
+      folder: "Bookmarks bar",
+    },
+  };
+}
+
+export function removeBookmarkFromDocument(document, url) {
+  const canonical = canonicalUrl(url);
+  const next = cloneDocument(document);
+  if (!canonical) return { document: next, removed: 0 };
+  let removed = 0;
+  function removeFrom(node) {
+    if (!Array.isArray(node?.children)) return;
+    node.children = node.children.filter((child) => {
+      if (child?.type === "url" && canonicalUrl(child.url) === canonical) {
+        removed += 1;
+        return false;
+      }
+      removeFrom(child);
+      return true;
+    });
+  }
+  for (const root of Object.values(next.roots || {})) removeFrom(root);
+  return { document: next, removed };
 }

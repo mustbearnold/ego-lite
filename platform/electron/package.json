@@ -22,6 +22,7 @@
     "test:agent-visuals": "xvfb-run --auto-servernum node test/agent-visuals.mjs",
     "test:bookmarks": "node test/bookmarks.mjs",
     "test:background-space": "xvfb-run --auto-servernum node test/background-space.mjs",
+    "test:bookmark-controls": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/bookmark-controls.mjs",
     "test:browser-sync": "node test/browser-sync.mjs",
     "test:browser-sync-electron": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/browser-data-sync.mjs",
     "test:cookie-parity": "npm run build:sdk && xvfb-run --auto-servernum node test/cookie-inheritance.mjs",

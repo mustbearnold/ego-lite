@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { readBookmarks } from "./bookmarks.mjs";
+import { readBookmarks, readBookmarksDocument } from "./bookmarks.mjs";
 import { normalizeHistory } from "./history.mjs";
 
 export const BROWSER_SYNC_VERSION = 1;
@@ -92,6 +92,9 @@ export async function readBrowserSourceData(profileDir) {
   return {
     profileDir: source,
     sourceName: sourceProfileName(source),
+    bookmarksDocument: existsSync(bookmarksPath)
+      ? readBookmarksDocument(bookmarksPath)
+      : null,
     bookmarks: existsSync(bookmarksPath) ? readBookmarks(bookmarksPath) : null,
     history: await readChromiumHistory(historyPath),
   };
