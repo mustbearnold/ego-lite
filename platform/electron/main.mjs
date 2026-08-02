@@ -124,6 +124,36 @@ function managedTabState() {
   }));
 }
 
+function readTaskSpaceState() {
+  try {
+    const state = JSON.parse(readFileSync(STATE_PATH, "utf8"));
+    if (state?.version === 1 && Array.isArray(state.spaces)) return state;
+  } catch {
+    // The SDK may not have created its state file yet.
+  }
+  return { version: 1, nextId: 1, spaces: [] };
+}
+
+function writeTaskSpaceState(state) {
+  mkdirSync(dirname(STATE_PATH), { recursive: true });
+  const temporaryPath = `${STATE_PATH}.${process.pid}.tmp`;
+  writeFileSync(temporaryPath, `${JSON.stringify(state, null, 2)}\n`);
+  renameSync(temporaryPath, STATE_PATH);
+}
+
+function currentTaskSpaces() {
+  return readTaskSpaceState().spaces.map((space) => ({
+    id: Number(space.id),
+    taskId: space.taskId || null,
+    name: space.name || `Space ${space.id}`,
+    ownership: space.ownership === "user" ? "user" : "agent",
+    createdAt: space.createdAt || null,
+    tabCount: [...managedViews.values()].filter(
+      (managed) => managed.spaceId === Number(space.id),
+    ).length,
+  }));
+}
+
 function currentControlState() {
   const active = [...managedViews.values()].find(
     (managed) => managed.view === browserView,
@@ -135,13 +165,9 @@ function currentControlState() {
       label: "Your tab",
     };
   }
-  let space;
-  try {
-    const state = JSON.parse(readFileSync(STATE_PATH, "utf8"));
-    space = state.spaces?.find((candidate) => candidate.id === active.spaceId);
-  } catch {
-    // The host may not have created its state file yet.
-  }
+  const space = readTaskSpaceState().spaces.find(
+    (candidate) => candidate.id === active.spaceId,
+  );
   const ownership = space?.ownership === "user" ? "user" : "agent";
   return {
     scope: "space",
@@ -158,6 +184,7 @@ function currentBrowserState() {
     url: browserView?.webContents.getURL() || "about:blank",
     agentTaskState,
     controlState: currentControlState(),
+    taskSpaces: currentTaskSpaces(),
     canGoBack: browserView?.webContents.navigationHistory.canGoBack() || false,
     canGoForward:
       browserView?.webContents.navigationHistory.canGoForward() || false,
@@ -710,6 +737,45 @@ async function closeActiveTab() {
   if (!active) return managedTabState();
   await closeManagedView(active[0]);
   return managedTabState();
+}
+
+function requestedSpaceId(value) {
+  const id = Number(value);
+  if (!Number.isInteger(id) || id < 0) {
+    throw new Error("task Space id must be a non-negative integer");
+  }
+  return id;
+}
+
+function setTaskSpaceOwnership({ spaceId, ownership }) {
+  const id = requestedSpaceId(spaceId);
+  if (ownership !== "agent" && ownership !== "user") {
+    throw new Error("task Space ownership must be agent or user");
+  }
+  const state = readTaskSpaceState();
+  const space = state.spaces.find((candidate) => candidate.id === id);
+  if (!space) throw new Error(`task Space not found: ${id}`);
+  space.ownership = ownership;
+  writeTaskSpaceState(state);
+  publishBrowserState();
+  return currentBrowserState();
+}
+
+async function stopTaskSpace({ spaceId }) {
+  const id = requestedSpaceId(spaceId);
+  const state = readTaskSpaceState();
+  if (!state.spaces.some((space) => space.id === id)) {
+    throw new Error(`task Space not found: ${id}`);
+  }
+  const targetIds = [...managedViews.entries()]
+    .filter(([, managed]) => managed.spaceId === id)
+    .map(([targetId]) => targetId);
+  for (const targetId of targetIds) await closeManagedView(targetId);
+  state.spaces = state.spaces.filter((space) => space.id !== id);
+  writeTaskSpaceState(state);
+  await saveSpaceSession();
+  publishBrowserState();
+  return currentBrowserState();
 }
 
 function managedViewForTarget(targetId) {
@@ -1352,6 +1418,12 @@ ipcMain.handle("ego-lite:set-tab-group", (_event, value) =>
 );
 ipcMain.handle("ego-lite:new-tab", () => createUserTab());
 ipcMain.handle("ego-lite:close-tab", () => closeActiveTab());
+ipcMain.handle("ego-lite:set-space-ownership", (_event, value) =>
+  setTaskSpaceOwnership(value || {}),
+);
+ipcMain.handle("ego-lite:stop-space", (_event, value) =>
+  stopTaskSpace(value || {}),
+);
 ipcMain.handle("ego-lite:list-tabs", () => managedTabState());
 ipcMain.handle("ego-lite:activate-tab", (_event, targetId) => {
   const managed = managedViews.get(targetId);

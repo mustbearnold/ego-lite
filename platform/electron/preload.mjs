@@ -9,6 +9,9 @@ contextBridge.exposeInMainWorld("egoLite", {
   setTabGroup: (value) => ipcRenderer.invoke("ego-lite:set-tab-group", value),
   newTab: () => ipcRenderer.invoke("ego-lite:new-tab"),
   closeTab: () => ipcRenderer.invoke("ego-lite:close-tab"),
+  setSpaceOwnership: (value) =>
+    ipcRenderer.invoke("ego-lite:set-space-ownership", value),
+  stopSpace: (value) => ipcRenderer.invoke("ego-lite:stop-space", value),
   listTabs: () => ipcRenderer.invoke("ego-lite:list-tabs"),
   activateTab: (targetId) =>
     ipcRenderer.invoke("ego-lite:activate-tab", targetId),

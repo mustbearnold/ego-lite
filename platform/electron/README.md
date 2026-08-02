@@ -42,6 +42,8 @@ The toolbar’s Import button provides the repeatable Settings → Import data p
 
 Agent-created task tabs stay in the background by default, so creating or navigating a Space does not replace the user’s visible tab. Use the toolbar’s tab picker to inspect or reveal a Space explicitly.
 
+The Spaces menu lists active agent workspaces and exposes Take over/Return control plus Stop actions; stopping a Space closes its task tabs and removes its persisted task state.
+
 The Electron toolbar also provides New tab and Close tab controls, with Ctrl/Cmd+T and Ctrl/Cmd+W shortcuts from either the toolbar or the focused page; closing the final primary tab keeps one blank replacement tab available.
 
 When a Space is revealed, the toolbar’s live control badge reports whether the Space is under agent or user control; it follows the ownership state written by the SDK’s handoff and takeover methods.
@@ -88,7 +90,7 @@ The Electron shell also persists its primary tabs and active tab across a restar
 npm run test:session-restore
 ```
 
-Task-Space tabs are also persisted as background views and rebound to the current Electron targets when the app restarts. The detached probe verifies restored Space URLs, SDK reuse, and the toolbar DOM without revealing a Space:
+Task-Space tabs are also persisted as background views and rebound to the current Electron targets when the app restarts. The detached probe verifies restored Space URLs, SDK reuse, the Spaces menu, ownership handoff, stopping a Space, and the toolbar DOM:
 
 ```bash
 npm run test:space-restore

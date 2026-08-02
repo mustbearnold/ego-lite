@@ -326,9 +326,23 @@ try {
       );
       return value === "Agent control" ? value : null;
     });
-    const state = JSON.parse(await readFile(statePath, "utf8"));
-    state.spaces.find((space) => space.id === 7).ownership = "user";
-    await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`);
+    const spaceMenu = await waitFor("Spaces menu", async () => {
+      const value = await evaluate(
+        renderer.connection,
+        renderer.sessionId,
+        "(() => { const menu = document.querySelector('#space-menu'); if (!menu || menu.hidden) return null; menu.open = true; return {open: menu.open, buttons: [...document.querySelectorAll('#space-list button')].map((button) => ({action: button.dataset.spaceAction, label: button.textContent}))}; })()",
+      );
+      return value?.open &&
+        value.buttons?.some((button) => button.action === "ownership") &&
+        value.buttons?.some((button) => button.action === "stop")
+        ? value
+        : null;
+    });
+    await evaluate(
+      renderer.connection,
+      renderer.sessionId,
+      "document.querySelector('#space-list button[data-space-action=ownership]').click(); true",
+    );
     const userControl = await waitFor("user control badge", async () => {
       const value = await evaluate(
         renderer.connection,
@@ -337,8 +351,15 @@ try {
       );
       return value === "User control" ? value : null;
     });
-    state.spaces.find((space) => space.id === 7).ownership = "agent";
-    await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`);
+    const takenOverState = JSON.parse(await readFile(statePath, "utf8"));
+    if (takenOverState.spaces.find((space) => space.id === 7)?.ownership !== "user") {
+      throw new Error(`Space takeover did not persist: ${JSON.stringify(takenOverState)}`);
+    }
+    await evaluate(
+      renderer.connection,
+      renderer.sessionId,
+      "document.querySelector('#space-list button[data-space-action=ownership]').click(); true",
+    );
     const returnedAgentControl = await waitFor(
       "returned agent control badge",
       async () => {
@@ -350,6 +371,10 @@ try {
         return value === "Agent control" ? value : null;
       },
     );
+    const returnedState = JSON.parse(await readFile(statePath, "utf8"));
+    if (returnedState.spaces.find((space) => space.id === 7)?.ownership !== "agent") {
+      throw new Error(`Space return did not persist: ${JSON.stringify(returnedState)}`);
+    }
     const toolbar = await waitFor("restored Space toolbar DOM", async () => {
       const value = await evaluate(
         renderer.connection,
@@ -360,13 +385,41 @@ try {
         ? value
         : null;
     });
+    await evaluate(
+      renderer.connection,
+      renderer.sessionId,
+      "document.querySelector('#space-list button[data-space-action=stop]').click(); true",
+    );
+    const stopped = await waitFor("stopped Space", async () => {
+      const result = await bridgeRequest(secondBridge, "/tabs");
+      const state = JSON.parse(await readFile(statePath, "utf8"));
+      return !result.tabs?.some((tab) => tab.spaceId === 7) &&
+        !state.spaces?.some((space) => space.id === 7)
+        ? result
+        : null;
+    });
+    const menuAfterStop = await waitFor("hidden Spaces menu", async () => {
+      const value = await evaluate(
+        renderer.connection,
+        renderer.sessionId,
+        "document.querySelector('#space-menu')?.hidden",
+      );
+      return value === true ? value : null;
+    });
     console.log(
       JSON.stringify({
         createdTargetIds: [one.targetId, two.targetId],
         firstPrimaryActive: Boolean(firstTabs.tabs.find((tab) => tab.spaceId === null)?.active),
         restoredUrls: restored.tabs.map((tab) => tab.url).sort(),
         sdk,
-        controls: { agentControl, userControl, returnedAgentControl },
+        controls: {
+          agentControl,
+          spaceMenu,
+          userControl,
+          returnedAgentControl,
+          stopped: !stopped.tabs.some((tab) => tab.spaceId === 7),
+          menuAfterStop,
+        },
         toolbar,
       }),
     );

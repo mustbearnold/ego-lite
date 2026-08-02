@@ -105,6 +105,63 @@
         display: none;
       }
 
+      #space-menu {
+        position: relative;
+      }
+
+      #space-menu summary {
+        background: #1f2937;
+        border: 1px solid #4b5563;
+        border-radius: 6px;
+        color: #e5e7eb;
+        cursor: pointer;
+        font-size: 13px;
+        height: 34px;
+        list-style: none;
+        padding: 8px 10px;
+        white-space: nowrap;
+      }
+
+      #space-menu summary::-webkit-details-marker {
+        display: none;
+      }
+
+      #space-list {
+        background: #1f2937;
+        border: 1px solid #4b5563;
+        border-radius: 6px;
+        display: grid;
+        gap: 6px;
+        min-width: 280px;
+        padding: 6px;
+        position: absolute;
+        right: 0;
+        top: 40px;
+        z-index: 10;
+      }
+
+      .space-row {
+        align-items: center;
+        display: flex;
+        gap: 6px;
+      }
+
+      .space-row > span {
+        flex: 1;
+        font-size: 12px;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .space-row button {
+        font-size: 11px;
+        height: 28px;
+        min-width: 0;
+        padding: 0 7px;
+      }
+
       #group-list {
         background: #1f2937;
         border: 1px solid #4b5563;
@@ -184,6 +241,10 @@
         Import
       </button>
       <select id="tab-picker" aria-label="Open tab"></select>
+      <details id="space-menu" hidden>
+        <summary>Spaces</summary>
+        <div id="space-list" role="menu"></div>
+      </details>
       <details id="group-menu" hidden>
         <summary>Groups</summary>
         <div id="group-list" role="menu"></div>
@@ -200,6 +261,8 @@
       const closeTab = document.querySelector("#close-tab");
       const importData = document.querySelector("#import-data");
       const tabPicker = document.querySelector("#tab-picker");
+      const spaceMenu = document.querySelector("#space-menu");
+      const spaceList = document.querySelector("#space-list");
       const groupMenu = document.querySelector("#group-menu");
       const groupList = document.querySelector("#group-list");
       const control = document.querySelector("#control");
@@ -211,6 +274,59 @@
             : tab.spaceName || `Space ${tab.spaceId}`;
         const location = tab.title || tab.url || "New tab";
         return `${space} — ${location}`;
+      }
+
+      function applySpaces(spaces = []) {
+        spaceList.replaceChildren();
+        spaceMenu.hidden = spaces.length === 0;
+        for (const space of spaces) {
+          const row = document.createElement("div");
+          row.className = "space-row";
+          row.dataset.spaceId = String(space.id);
+          const label = document.createElement("span");
+          label.textContent = `${space.name || `Space ${space.id}`} · ${space.ownership === "user" ? "user" : "agent"} · ${space.tabCount || 0} tab${space.tabCount === 1 ? "" : "s"}`;
+          row.append(label);
+
+          const ownership = document.createElement("button");
+          ownership.type = "button";
+          ownership.dataset.spaceAction = "ownership";
+          ownership.setAttribute(
+            "aria-label",
+            `${space.ownership === "user" ? "Return control to agent" : "Take over Space"}: ${space.name || `Space ${space.id}`}`,
+          );
+          ownership.textContent = space.ownership === "user" ? "Return" : "Take over";
+          ownership.addEventListener("click", async () => {
+            try {
+              applyState(
+                await window.egoLite.setSpaceOwnership({
+                  spaceId: space.id,
+                  ownership: space.ownership === "user" ? "agent" : "user",
+                }),
+              );
+            } catch (error) {
+              status.textContent = error.message;
+            }
+          });
+          row.append(ownership);
+
+          const stop = document.createElement("button");
+          stop.type = "button";
+          stop.dataset.spaceAction = "stop";
+          stop.setAttribute(
+            "aria-label",
+            `Stop Space: ${space.name || `Space ${space.id}`}`,
+          );
+          stop.textContent = "Stop";
+          stop.addEventListener("click", async () => {
+            try {
+              applyState(await window.egoLite.stopSpace({ spaceId: space.id }));
+            } catch (error) {
+              status.textContent = error.message;
+            }
+          });
+          row.append(stop);
+          spaceList.append(row);
+        }
       }
 
       function applyTabs(tabs = []) {
@@ -277,6 +393,7 @@
         control.dataset.ownership = controlState.ownership || "user";
         back.disabled = !state.canGoBack;
         forward.disabled = !state.canGoForward;
+        applySpaces(state.taskSpaces);
         applyTabs(state.tabs);
       }
 
