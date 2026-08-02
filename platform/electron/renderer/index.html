@@ -289,6 +289,50 @@
         width: 16px;
       }
 
+      #profile-menu {
+        position: relative;
+      }
+
+      #profile-menu summary {
+        background: #1f2937;
+        border: 1px solid #4b5563;
+        border-radius: 6px;
+        color: #e5e7eb;
+        cursor: pointer;
+        font-size: 13px;
+        height: 34px;
+        list-style: none;
+        padding: 8px 10px;
+        white-space: nowrap;
+      }
+
+      #profile-menu summary::-webkit-details-marker {
+        display: none;
+      }
+
+      #profile-list {
+        background: #1f2937;
+        border: 1px solid #4b5563;
+        border-radius: 6px;
+        display: grid;
+        gap: 4px;
+        min-width: 220px;
+        padding: 6px;
+        position: absolute;
+        right: 0;
+        top: 40px;
+        z-index: 10;
+      }
+
+      #profile-list button {
+        font-size: 12px;
+        overflow: hidden;
+        text-align: left;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        width: 100%;
+      }
+
       #download-menu {
         position: relative;
       }
@@ -433,6 +477,10 @@
       <button id="import-data" type="button" title="Import browser data">
         Import
       </button>
+      <details id="profile-menu" hidden>
+        <summary>Profile</summary>
+        <div id="profile-list" role="menu"></div>
+      </details>
       <details id="bookmark-menu" hidden>
         <summary>Bookmarks</summary>
         <div id="bookmark-list" role="menu"></div>
@@ -467,6 +515,8 @@
       const newPrivateTab = document.querySelector("#new-private-tab");
       const closeTab = document.querySelector("#close-tab");
       const importData = document.querySelector("#import-data");
+      const profileMenu = document.querySelector("#profile-menu");
+      const profileList = document.querySelector("#profile-list");
       const bookmarkMenu = document.querySelector("#bookmark-menu");
       const bookmarkList = document.querySelector("#bookmark-list");
       const extensionMenu = document.querySelector("#extension-menu");
@@ -490,6 +540,44 @@
             : tab.spaceName || `Space ${tab.spaceId}`;
         const location = tab.title || tab.url || "New tab";
         return `${space} — ${location}`;
+      }
+
+      function applyProfiles(profiles = [], activeId = "default") {
+        profileList.replaceChildren();
+        profileMenu.hidden = profiles.length === 0;
+        if (profiles.length === 0) return;
+        const active = profiles.find((profile) => profile.id === activeId);
+        profileMenu.querySelector("summary").textContent = `Profile · ${active?.name || activeId}`;
+        for (const profile of profiles) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.dataset.profileId = profile.id;
+          button.textContent = `${profile.name}${profile.active ? " · active" : ""}`;
+          button.disabled = Boolean(profile.active);
+          button.setAttribute("aria-label", `Use profile: ${profile.name}`);
+          button.addEventListener("click", async () => {
+            try {
+              await window.egoLite.switchProfile({ id: profile.id });
+            } catch (error) {
+              status.textContent = error.message;
+            }
+          });
+          profileList.append(button);
+        }
+        const create = document.createElement("button");
+        create.type = "button";
+        create.textContent = "New profile…";
+        create.setAttribute("aria-label", "Create new profile");
+        create.addEventListener("click", async () => {
+          const name = window.prompt("New profile name");
+          if (!name?.trim()) return;
+          try {
+            await window.egoLite.createProfile({ name });
+          } catch (error) {
+            status.textContent = error.message;
+          }
+        });
+        profileList.append(create);
       }
 
       function applyBookmarks(bookmarks = []) {
@@ -719,6 +807,7 @@
         control.dataset.ownership = controlState.ownership || "user";
         back.disabled = !state.canGoBack;
         forward.disabled = !state.canGoForward;
+        applyProfiles(state.profiles, state.profileId);
         applyBookmarks(state.bookmarks);
         applyExtensions(state.extensions);
         applyDownloads(state.downloads);

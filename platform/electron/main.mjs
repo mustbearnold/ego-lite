@@ -29,21 +29,65 @@ import { readBookmarks } from "./bookmarks.mjs";
 import { createUpdateController } from "./update.mjs";
 
 const MAIN_DIR = dirname(fileURLToPath(import.meta.url));
-const PROFILE_DIR = resolve(
-  process.env.EGO_LITE_PROFILE_DIR ||
+const CLI_MODE = process.argv.includes("--cli");
+const CLI_PROFILE_MIGRATION =
+  CLI_MODE && process.argv.includes("--migrate-profile");
+
+function argumentValue(flag) {
+  const exactIndex = process.argv.indexOf(flag);
+  if (exactIndex >= 0) return process.argv[exactIndex + 1] || null;
+  const prefix = `${flag}=`;
+  return process.argv.find((argument) => argument.startsWith(prefix))?.slice(
+    prefix.length,
+  );
+}
+
+function validProfileId(value) {
+  const candidate = String(value || "").trim().toLowerCase();
+  return /^[a-z0-9][a-z0-9_-]{0,39}$/.test(candidate)
+    ? candidate
+    : "default";
+}
+
+const ACTIVE_PROFILE_ID = validProfileId(
+  argumentValue("--profile") || process.env.EGO_LITE_PROFILE_ID || "default",
+);
+const PROFILE_STORAGE_ROOT = resolve(
+  process.env.EGO_LITE_PROFILE_ROOT ||
     join(
       process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"),
       "ego-lite",
-      "chromium-profile",
     ),
+);
+const PROFILE_REGISTRY_PATH = join(PROFILE_STORAGE_ROOT, "profiles.json");
+const PROFILE_MANAGER_ENABLED =
+  !process.env.EGO_LITE_PROFILE_DIR && !CLI_MODE && !CLI_PROFILE_MIGRATION;
+const PROFILE_DIR = resolve(
+  process.env.EGO_LITE_PROFILE_DIR ||
+    (ACTIVE_PROFILE_ID === "default"
+      ? join(PROFILE_STORAGE_ROOT, "chromium-profile")
+      : join(
+          PROFILE_STORAGE_ROOT,
+          "profiles",
+          ACTIVE_PROFILE_ID,
+          "chromium-profile",
+        )),
 );
 const STATE_PATH = resolve(
   process.env.EGO_LITE_STATE_PATH ||
-    join(
-      process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"),
-      "ego-lite",
-      "task-spaces.json",
-    ),
+    (ACTIVE_PROFILE_ID === "default"
+      ? join(
+          process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"),
+          "ego-lite",
+          "task-spaces.json",
+        )
+      : join(
+          process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"),
+          "ego-lite",
+          "profiles",
+          ACTIVE_PROFILE_ID,
+          "task-spaces.json",
+        )),
 );
 const WINDOW_STATE_PATH = resolve(
   process.env.EGO_LITE_WINDOW_STATE_PATH ||
@@ -58,9 +102,6 @@ const WINDOW_MIN_WIDTH = 720;
 const WINDOW_MIN_HEIGHT = 480;
 const WINDOW_DEFAULT_WIDTH = 1440;
 const WINDOW_DEFAULT_HEIGHT = 900;
-const CLI_MODE = process.argv.includes("--cli");
-const CLI_PROFILE_MIGRATION =
-  CLI_MODE && process.argv.includes("--migrate-profile");
 
 mkdirSync(PROFILE_DIR, { recursive: true });
 app.setPath("userData", PROFILE_DIR);
@@ -253,6 +294,138 @@ function scheduleWindowStateSave() {
   }, 100);
 }
 
+function readProfileRegistry() {
+  const fallback = [
+    {
+      id: "default",
+      name: "Personal",
+      createdAt: null,
+      lastUsedAt: null,
+    },
+  ];
+  if (!PROFILE_MANAGER_ENABLED) return fallback;
+  let stored;
+  try {
+    stored = JSON.parse(readFileSync(PROFILE_REGISTRY_PATH, "utf8"));
+  } catch {
+    stored = null;
+  }
+  const profiles = new Map();
+  for (const profile of Array.isArray(stored?.profiles)
+    ? stored.profiles
+    : []) {
+    const id = validProfileId(profile?.id);
+    if (id !== profile?.id || profiles.has(id)) continue;
+    profiles.set(id, {
+      id,
+      name: String(profile.name || id).trim().slice(0, 80) || id,
+      createdAt: profile.createdAt || null,
+      lastUsedAt: profile.lastUsedAt || null,
+    });
+  }
+  if (!profiles.has("default")) profiles.set("default", fallback[0]);
+  if (!profiles.has(ACTIVE_PROFILE_ID)) {
+    profiles.set(ACTIVE_PROFILE_ID, {
+      id: ACTIVE_PROFILE_ID,
+      name: ACTIVE_PROFILE_ID,
+      createdAt: null,
+      lastUsedAt: null,
+    });
+  }
+  return [...profiles.values()].sort((left, right) => {
+    if (left.id === "default") return -1;
+    if (right.id === "default") return 1;
+    return String(left.name).localeCompare(String(right.name));
+  });
+}
+
+function writeProfileRegistry(profiles) {
+  mkdirSync(dirname(PROFILE_REGISTRY_PATH), { recursive: true });
+  const temporaryPath = `${PROFILE_REGISTRY_PATH}.${process.pid}.tmp`;
+  writeFileSync(
+    temporaryPath,
+    `${JSON.stringify({ version: 1, profiles }, null, 2)}\n`,
+  );
+  renameSync(temporaryPath, PROFILE_REGISTRY_PATH);
+}
+
+function profileSlug(value) {
+  const slug = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32);
+  return validProfileId(slug === "default" ? "profile" : slug);
+}
+
+function currentProfiles() {
+  if (!PROFILE_MANAGER_ENABLED) return [];
+  return readProfileRegistry().map((profile) => ({
+    ...profile,
+    active: profile.id === ACTIVE_PROFILE_ID,
+  }));
+}
+
+function relaunchArgumentsForProfile(profileId) {
+  const args = [];
+  for (let index = 1; index < process.argv.length; index += 1) {
+    const argument = process.argv[index];
+    if (argument === "--profile") {
+      index += 1;
+      continue;
+    }
+    if (argument.startsWith("--profile=")) continue;
+    args.push(argument);
+  }
+  args.push("--profile", profileId);
+  return args;
+}
+
+function relaunchForProfile(profileId) {
+  if (!PROFILE_MANAGER_ENABLED) {
+    throw new Error("profile switching is unavailable for a custom profile");
+  }
+  const profiles = readProfileRegistry();
+  if (!profiles.some((profile) => profile.id === profileId)) {
+    throw new Error(`profile not found: ${profileId}`);
+  }
+  const updatedProfiles = profiles.map((profile) =>
+    profile.id === profileId
+      ? { ...profile, lastUsedAt: new Date().toISOString() }
+      : profile,
+  );
+  writeProfileRegistry(updatedProfiles);
+  saveWindowStateSync();
+  savePrimarySessionSync();
+  saveSpaceSessionSync();
+  app.relaunch({ args: relaunchArgumentsForProfile(profileId) });
+  app.exit(0);
+  return { restarting: true, profileId };
+}
+
+function createProfile({ name }) {
+  if (!PROFILE_MANAGER_ENABLED) {
+    throw new Error("profile creation is unavailable for a custom profile");
+  }
+  const label = String(name || "").trim().slice(0, 80);
+  if (!label) throw new Error("profile name is required");
+  const profiles = readProfileRegistry();
+  const existingIds = new Set(profiles.map((profile) => profile.id));
+  const baseId = profileSlug(label);
+  let id = baseId;
+  let suffix = 2;
+  while (existingIds.has(id)) id = `${baseId}-${suffix++}`;
+  const profile = {
+    id,
+    name: label,
+    createdAt: new Date().toISOString(),
+    lastUsedAt: null,
+  };
+  writeProfileRegistry([...profiles, profile]);
+  return relaunchForProfile(id);
+}
+
 function managedTabState() {
   return [...managedViews.entries()].map(([targetId, managed]) => ({
     targetId,
@@ -398,6 +571,8 @@ function currentBrowserState() {
   return {
     title: browserView?.webContents.getTitle() || "ego lite",
     url: browserView?.webContents.getURL() || "about:blank",
+    profileId: ACTIVE_PROFILE_ID,
+    profiles: currentProfiles(),
     agentTaskState,
     controlState: currentControlState(),
     bookmarks,
@@ -1759,7 +1934,8 @@ async function maybeOfferPackagedMigration() {
   if (
     !promptEnabled ||
     CLI_MODE ||
-    process.env.EGO_LITE_SKIP_MIGRATION === "1"
+    process.env.EGO_LITE_SKIP_MIGRATION === "1" ||
+    ACTIVE_PROFILE_ID !== "default"
   ) {
     return { stopped: false };
   }
@@ -1889,6 +2065,16 @@ ipcMain.handle("ego-lite:forward", () => {
 });
 ipcMain.handle("ego-lite:reload", () => browserView?.webContents.reload());
 ipcMain.handle("ego-lite:import-data", () => requestProfileImport());
+ipcMain.handle("ego-lite:switch-profile", (_event, value) => {
+  const id = String(value?.id || "").trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9_-]{0,39}$/.test(id)) {
+    throw new Error("profile id is invalid");
+  }
+  return relaunchForProfile(id);
+});
+ipcMain.handle("ego-lite:create-profile", (_event, value) =>
+  createProfile(value || {}),
+);
 ipcMain.handle("ego-lite:show-download", (_event, id) => {
   const download = downloadStates.get(String(id));
   if (!download?.path) throw new Error("download is not ready");

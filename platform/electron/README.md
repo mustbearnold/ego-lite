@@ -42,6 +42,8 @@ On the first packaged-app launch, when a supported Chromium-family profile is fo
 
 The toolbar’s Import button provides the repeatable Settings → Import data path. It opens a directory chooser for a Chromium-family user-data directory or profile, saves the request, restarts the app, performs the guarded migration before the new window opens, restores imported HTTP(S) tabs and groups, and backs up replaced target data. Close the source browser first; basic-store passwords are copied while keyring-backed passwords remain excluded.
 
+The Profile menu keeps the existing default profile at `~/.local/share/ego-lite/chromium-profile`, stores additional profiles under `~/.local/share/ego-lite/profiles/`, and restarts into the selected profile. Each profile has independent browser data, task-space state, extensions, tabs, and window state; new profiles start empty and can use Import data later.
+
 Agent-created task tabs stay in the background by default, so creating or navigating a Space does not replace the user’s visible tab. Use the toolbar’s tab picker to inspect or reveal a Space explicitly.
 
 The toolbar exposes bookmarks imported into the Electron profile and a Private tab action. Private tabs use an in-memory Chromium partition, do not inherit the primary tab’s cookies, and are not written to the primary session manifest. `Ctrl/Cmd+Shift+N` opens one from the toolbar or a focused page; `Ctrl/Cmd+T` and `Ctrl/Cmd+W` continue to create and close ordinary tabs.
@@ -118,6 +120,12 @@ The detached tab-control probe verifies button actions, toolbar keyboard shortcu
 
 ```bash
 npm run test:tab-controls
+```
+
+The detached profile probe verifies an explicit profile registry and the Profile toolbar menu without opening a foreground window:
+
+```bash
+npm run test:profiles
 ```
 
 The migration-discovery probe verifies that all usable supported profiles are enumerated while the standalone single-profile helper refuses to guess when multiple profiles are available:
