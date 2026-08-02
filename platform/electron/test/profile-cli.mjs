@@ -80,6 +80,7 @@ try {
   );
   const report = parseReport(result.stdout);
   assert.equal(report.platform, "linux");
+  assert.equal(report.profileId, "work");
   assert.equal(
     report.profileDir,
     join(profileRoot, "profiles", "work", "chromium-profile"),

@@ -2148,11 +2148,19 @@ async function runHostCommand(args) {
   const hostPath = hostResourcePath();
   const previousProfileDir = process.env.EGO_LITE_PROFILE_DIR;
   const previousStatePath = process.env.EGO_LITE_STATE_PATH;
+  const previousProfileId = process.env.EGO_LITE_PROFILE_ID;
+  const previousServerName = process.env.EGO_LITE_SERVER_NAME;
   if (previousProfileDir === undefined) {
     process.env.EGO_LITE_PROFILE_DIR = PROFILE_DIR;
   }
   if (previousStatePath === undefined) {
     process.env.EGO_LITE_STATE_PATH = STATE_PATH;
+  }
+  if (previousProfileId === undefined) {
+    process.env.EGO_LITE_PROFILE_ID = ACTIVE_PROFILE_ID;
+  }
+  if (previousServerName === undefined) {
+    process.env.EGO_LITE_SERVER_NAME = SERVER_NAME;
   }
   try {
     const { runHost } = await import(pathToFileURL(hostPath).href);
@@ -2167,6 +2175,16 @@ async function runHostCommand(args) {
       delete process.env.EGO_LITE_STATE_PATH;
     } else {
       process.env.EGO_LITE_STATE_PATH = previousStatePath;
+    }
+    if (previousProfileId === undefined) {
+      delete process.env.EGO_LITE_PROFILE_ID;
+    } else {
+      process.env.EGO_LITE_PROFILE_ID = previousProfileId;
+    }
+    if (previousServerName === undefined) {
+      delete process.env.EGO_LITE_SERVER_NAME;
+    } else {
+      process.env.EGO_LITE_SERVER_NAME = previousServerName;
     }
   }
 }
