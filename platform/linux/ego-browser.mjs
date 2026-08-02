@@ -23,6 +23,11 @@ import {
   normalizeServerName,
   serverDataRoot,
 } from "./server-name.mjs";
+import {
+  automationErrorResponse,
+  parseAutomationRequest,
+  runStandaloneAutomation,
+} from "./automation.mjs";
 
 const HOST_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_DIR = resolve(HOST_DIR, "../..");
@@ -188,6 +193,7 @@ Commands:
   ego-browser --doctor
   ego-browser --launch
   ego-browser --reload
+  ego-browser --automation < request.json
   ego-browser upgrade
   ego-browser --profile NAME
   ego-browser --server-name NAME
@@ -207,6 +213,13 @@ Opening URLs and files:
   ego-lite --launch https://example.com
   ego-lite --launch /absolute/path/to/page.html
   Multiple HTTP(S) URLs and local files may be passed together.
+
+Automation:
+  --automation reads one versioned JSON request from stdin and writes one JSON
+  response to stdout. Requests use {"version":1,"action":"state","params":{}}.
+  Supported actions include state, window.get, tabs.list, spaces.list,
+  tab.create/activate/close/navigate/back/forward/reload/stop/mute, and
+  bookmarks.list plus bookmark.add/remove/open/toggle.
 
 Migration:
   --migrate-profile imports bookmarks, browser settings, extensions, local
@@ -406,11 +419,21 @@ class ElectronBridge {
 class LinuxEgoHost {
   constructor(
     connection,
-    { profileDir, statePath, browserVersion, browserUserAgent, electronBridge },
+    {
+      profileDir,
+      statePath,
+      browserVersion,
+      browserUserAgent,
+      electronBridge,
+      profileId = DEFAULT_PROFILE_ID,
+      serverName = DEFAULT_SERVER_NAME,
+    },
   ) {
     this.connection = connection;
     this.profileDir = profileDir;
     this.statePath = statePath;
+    this.profileId = profileId;
+    this.serverName = serverName;
     this.browserVersion = browserVersion;
     this.browserUserAgent = browserUserAgent;
     this.electronBridge = electronBridge;
@@ -2432,6 +2455,8 @@ async function connectToChromium(
   const host = await new LinuxEgoHost(connection, {
     profileDir,
     statePath,
+    profileId,
+    serverName,
     browserVersion: version.product || "Chromium",
     browserUserAgent: version.userAgent || "",
     electronBridge,
@@ -2464,6 +2489,19 @@ async function readStdin() {
   process.stdin.setEncoding("utf8");
   for await (const chunk of process.stdin) source += chunk;
   return source;
+}
+
+async function runAutomation(host, source) {
+  const request = parseAutomationRequest(source);
+  if (request?.ok === false) return request;
+  try {
+    if (host.electronBridge) {
+      return await host.electronBridge.request("/automation", request);
+    }
+    return await runStandaloneAutomation(host, request);
+  } catch (error) {
+    return automationErrorResponse(error);
+  }
 }
 
 const EXTERNAL_TARGET_PROTOCOLS = new Set(["file:", "http:", "https:"]);
@@ -2527,6 +2565,8 @@ function parseArgs(argv) {
       command = "launch";
     } else if (arg === "--reload") {
       command = "reload";
+    } else if (arg === "--automation") {
+      command = "automation";
     } else if (arg === "upgrade" || arg === "--upgrade") {
       command = "upgrade";
     } else if (arg === "--migrate-profile") {
@@ -2621,6 +2661,12 @@ export async function runHost(argv = process.argv.slice(2)) {
     fail("external URLs and files can only be opened with --launch");
   }
   const host = await connectToChromium(serverName, profileId);
+  if (command === "automation") {
+    const response = await runAutomation(host, await readStdin());
+    process.stdout.write(`${JSON.stringify(response)}\n`);
+    host.connection.close();
+    return response?.ok === true ? 0 : 1;
+  }
   if (command === "doctor") {
     const tabs = await host.listTabs();
     process.stdout.write(

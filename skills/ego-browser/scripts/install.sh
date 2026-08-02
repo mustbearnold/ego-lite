@@ -276,9 +276,11 @@ offer_linux_profile_migration() {
 install_linux() {
 	package_dir="$REPO_DIR/package/ego-browser"
 	host_source="$REPO_DIR/platform/linux/ego-browser.mjs"
+	automation_source="$REPO_DIR/platform/linux/automation.mjs"
 	[ -d "$package_dir" ] ||
 		die "Linux installation must run from the ego-lite-linux checkout; package/ego-browser was not found"
 	[ -f "$host_source" ] || die "Linux host source was not found: $host_source"
+	[ -f "$automation_source" ] || die "Linux automation source was not found: $automation_source"
 	require_command node
 	require_command npm
 	require_command install
@@ -302,6 +304,8 @@ install_linux() {
 		die "failed to install the ego-browser skill"
 	cp "$host_source" "$LINUX_INSTALL_DIR/linux/ego-browser.mjs" ||
 		die "failed to install the Linux browser host"
+	cp "$automation_source" "$LINUX_INSTALL_DIR/linux/automation.mjs" ||
+		die "failed to install the Linux automation contract"
 	chmod 0755 "$LINUX_INSTALL_DIR/linux/ego-browser.mjs"
 
 	for command_name in ego-browser ego-lite; do

@@ -111,6 +111,29 @@ content, and stopping a deliberately slow response:
 npm run test:page-actions
 ```
 
+The packaged CLI exposes the Linux automation contract used in place of the
+macOS AppleScript object model. It accepts one versioned JSON request on stdin
+and writes one JSON response on stdout; the authenticated Electron bridge uses
+the same request shape:
+
+```bash
+printf '%s\n' '{"version":1,"action":"state"}' | ego-lite --cli --automation
+printf '%s\n' '{"version":1,"action":"tabs.list"}' | ego-lite --cli --automation
+```
+
+The contract covers window state, the complete primary and Agent-Space tab
+inventory, Space listing, tab lifecycle/navigation/reload/stop/mute actions,
+and bookmark list/add/remove/open/toggle actions. Successful responses have
+`{"version":1,"ok":true,"result":...}`; invalid requests and unsupported
+operations return `ok: false` with a stable `error.code`. The detached probe
+exercises both the Electron bridge path and the headless standalone Chromium
+fallback without opening a foreground window:
+
+```bash
+npm run test:automation
+npm run test:standalone-automation
+```
+
 User downloads appear in the toolbar’s Downloads menu with progress, an Open action that uses the Linux desktop default application, and a Show action. Primary-tab downloads use `EGO_LITE_DOWNLOAD_DIR` when set, otherwise the normal `~/Downloads` directory; task-Space downloads retain the SDK/CDP-selected download path.
 
 The History menu keeps the last 100 HTTP(S) visits for the active profile, excludes private tabs, opens entries in the active tab, and provides Clear history. Its persistence and toolbar behavior are covered by `npm run test:history` and the detached private-tab/download probe.

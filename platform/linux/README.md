@@ -36,6 +36,22 @@ launcher. Use `ego-lite --launch https://example.com` or
 files open as primary tabs, with the final target active. The installed desktop
 entry passes `%U` and registers HTTP, HTTPS, file, HTML, and XHTML associations.
 
+The Linux host also exposes a stable one-shot automation contract. Send one
+JSON request on stdin and read one JSON response from stdout:
+
+```bash
+printf '%s\n' '{"version":1,"action":"state"}' | ego-lite --automation
+printf '%s\n' '{"version":1,"action":"tab.create","params":{"url":"https://example.com"}}' | ego-lite --automation
+```
+
+Responses always contain `version: 1` and `ok`; failures use a stable
+`error.code`. Supported actions cover window and Space inspection, tab creation,
+activation, closing, navigation, reload/stop, muting, and bookmark list/add/
+remove/open/toggle. When attached to Electron, the CLI uses the authenticated
+bridge and reports the complete managed-tab inventory. Against standalone
+Chromium it reports the active scope and supports the same tab/bookmark actions
+where Chromium exposes them.
+
 Tagged AppImage releases check for updates in the background and apply a downloaded update on the next launch; Debian and RPM installations use their package-manager update path. Set `EGO_LITE_DISABLE_AUTO_UPDATE=1` for offline or automated runs.
 
 ```bash

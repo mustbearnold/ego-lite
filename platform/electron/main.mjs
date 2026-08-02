@@ -981,6 +981,364 @@ function managedTabState() {
   }));
 }
 
+const AUTOMATION_VERSION = 1;
+const AUTOMATION_ACTIONS = new Set([
+  "state",
+  "window.get",
+  "window.focus",
+  "window.fullscreen",
+  "tabs.list",
+  "spaces.list",
+  "tab.create",
+  "tab.activate",
+  "tab.close",
+  "tab.navigate",
+  "tab.back",
+  "tab.forward",
+  "tab.reload",
+  "tab.stop",
+  "tab.mute",
+  "bookmarks.list",
+  "bookmark.add",
+  "bookmark.remove",
+  "bookmark.open",
+  "bookmark.toggle",
+]);
+
+function automationSuccess(result) {
+  return { version: AUTOMATION_VERSION, ok: true, result };
+}
+
+function automationFailure(code, message, details = undefined) {
+  return {
+    version: AUTOMATION_VERSION,
+    ok: false,
+    error: {
+      code,
+      message,
+      ...(details === undefined ? {} : { details }),
+    },
+  };
+}
+
+function automationWindowState() {
+  const available = Boolean(mainWindow && !mainWindow.isDestroyed());
+  return {
+    id: "main",
+    title: available ? mainWindow.getTitle() || "ego lite" : "ego lite",
+    active: available,
+    visible: available && mainWindow.isVisible(),
+    minimized: available && mainWindow.isMinimized(),
+    maximized: available && mainWindow.isMaximized(),
+    fullscreen: available && mainWindow.isFullScreen(),
+    bounds: available ? mainWindow.getBounds() : null,
+  };
+}
+
+function automationTab(targetId, managed) {
+  return {
+    id: targetId,
+    targetId,
+    spaceId: managed.spaceId,
+    spaceName: managed.spaceName || null,
+    private: Boolean(managed.private),
+    muted: managed.view.webContents.isAudioMuted(),
+    devtoolsOpen: managed.view.webContents.isDevToolsOpened(),
+    loading: managed.view.webContents.isLoading(),
+    url: managed.view.webContents.getURL() || "about:blank",
+    title: managed.view.webContents.getTitle() || "",
+    tabGroup: managed.tabGroup || null,
+    active: managed.view === browserView,
+  };
+}
+
+function automationState() {
+  const tabs = [...managedViews.entries()].map(([targetId, managed]) =>
+    automationTab(targetId, managed),
+  );
+  return {
+    platform: "linux",
+    profileId: ACTIVE_PROFILE_ID,
+    serverName: SERVER_NAME,
+    window: automationWindowState(),
+    activeTabId: tabs.find((tab) => tab.active)?.id || null,
+    tabs,
+    taskSpaces: currentTaskSpaces(),
+    bookmarks: bookmarks.map((bookmark) => ({ ...bookmark })),
+    capabilities: {
+      windowActions: true,
+      tabActions: true,
+      bookmarkActions: true,
+      fullWindowInventory: true,
+    },
+  };
+}
+
+function automationTarget(params = {}) {
+  const requested = params.id ?? params.targetId;
+  if (requested !== undefined && requested !== null && String(requested)) {
+    const targetId = String(requested);
+    const managed = managedViews.get(targetId);
+    if (!managed) throw new Error(`Electron target not found: ${targetId}`);
+    return { targetId, managed };
+  }
+  const entry = [...managedViews.entries()].find(
+    ([, managed]) => managed.view === browserView,
+  );
+  if (!entry) throw new Error("active tab not found");
+  return { targetId: entry[0], managed: entry[1] };
+}
+
+function automationSpaceId(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const id = Number(value);
+  if (!Number.isInteger(id) || id < 0) {
+    throw new Error("spaceId must be a non-negative integer");
+  }
+  return id;
+}
+
+function automationBookmarkUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    if (!["file:", "http:", "https:"].includes(url.protocol)) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function automationBookmark(params = {}) {
+  const id = params.id === undefined ? null : String(params.id);
+  const url = params.url ? automationBookmarkUrl(params.url) : null;
+  const name = params.name ? String(params.name) : null;
+  const bookmark = bookmarks.find(
+    (candidate) =>
+      (id && candidate.id === id) ||
+      (url && candidate.url === url) ||
+      (name && candidate.name === name),
+  );
+  if (!bookmark) throw new Error("bookmark not found");
+  return bookmark;
+}
+
+async function handleAutomationRequest(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return automationFailure(
+      "EGO_AUTOMATION_INVALID_REQUEST",
+      "automation request must be a JSON object",
+    );
+  }
+  if (body.version !== AUTOMATION_VERSION) {
+    return automationFailure(
+      "EGO_AUTOMATION_UNSUPPORTED_VERSION",
+      `automation version must be ${AUTOMATION_VERSION}`,
+      { received: body.version ?? null, supported: [AUTOMATION_VERSION] },
+    );
+  }
+  if (typeof body.action !== "string" || !AUTOMATION_ACTIONS.has(body.action)) {
+    return automationFailure(
+      "EGO_AUTOMATION_UNKNOWN_ACTION",
+      `unsupported automation action: ${String(body.action || "")}`,
+      { supported: [...AUTOMATION_ACTIONS].sort() },
+    );
+  }
+  if (
+    body.params !== undefined &&
+    (!body.params || typeof body.params !== "object" || Array.isArray(body.params))
+  ) {
+    return automationFailure(
+      "EGO_AUTOMATION_INVALID_PARAMS",
+      "automation params must be a JSON object",
+    );
+  }
+  const params = body.params || {};
+  try {
+    if (body.action === "state") return automationSuccess(automationState());
+    if (body.action === "window.get") {
+      const state = automationState();
+      return automationSuccess({
+        window: state.window,
+        activeTabId: state.activeTabId,
+      });
+    }
+    if (body.action === "window.focus") {
+      if (!mainWindow || mainWindow.isDestroyed()) {
+        throw new Error("ego lite window is unavailable");
+      }
+      mainWindow.show();
+      mainWindow.focus();
+      return automationSuccess({ window: automationWindowState() });
+    }
+    if (body.action === "window.fullscreen") {
+      if (!mainWindow || mainWindow.isDestroyed()) {
+        throw new Error("ego lite window is unavailable");
+      }
+      if (typeof params.enabled !== "boolean") {
+        throw new Error("window.fullscreen requires params.enabled");
+      }
+      mainWindow.setFullScreen(params.enabled);
+      return automationSuccess({ window: automationWindowState() });
+    }
+    if (body.action === "tabs.list") {
+      return automationSuccess({ tabs: automationState().tabs });
+    }
+    if (body.action === "spaces.list") {
+      return automationSuccess({ taskSpaces: currentTaskSpaces() });
+    }
+    if (body.action === "tab.create") {
+      const spaceId = automationSpaceId(params.spaceId);
+      const url = normalizeUrl(params.url || "about:blank");
+      let targetId;
+      if (spaceId === null) {
+        const primary = await createPrimaryBrowserView({
+          url,
+          privateMode: Boolean(params.private ?? params.privateMode),
+        });
+        targetId = primary.targetId;
+        setActiveBrowserView(primary.view);
+      } else {
+        const space = readTaskSpaceState().spaces.find(
+          (candidate) => Number(candidate.id) === spaceId,
+        );
+        if (!space) throw new Error(`task Space not found: ${spaceId}`);
+        if (params.private || params.privateMode) {
+          throw new Error("private tabs are only available in the primary window scope");
+        }
+        const task = await createManagedView({
+          spaceId,
+          spaceName: params.spaceName || space.name || null,
+          url,
+        });
+        targetId = task.targetId;
+        if (params.activate === true) {
+          const managed = managedViews.get(targetId);
+          if (managed) setActiveBrowserView(managed.view);
+        }
+      }
+      return automationSuccess({
+        tab: automationState().tabs.find((tab) => tab.id === targetId) || null,
+        state: automationState(),
+      });
+    }
+    if (body.action === "tab.activate") {
+      const target = automationTarget(params);
+      setActiveBrowserView(target.managed.view);
+      return automationSuccess({ state: automationState() });
+    }
+    if (body.action === "tab.close") {
+      const target = automationTarget(params);
+      const result = await closeManagedView(target.targetId);
+      return automationSuccess({
+        ...result,
+        state: result.windowClosed ? null : automationState(),
+      });
+    }
+    if (body.action === "tab.navigate") {
+      const target = automationTarget(params);
+      const url = await navigateOnView(target.managed.view, params.url);
+      if (params.activate === true) setActiveBrowserView(target.managed.view);
+      return automationSuccess({ url, state: automationState() });
+    }
+    if (body.action === "tab.back" || body.action === "tab.forward") {
+      const target = automationTarget(params);
+      const history = target.managed.view.webContents.navigationHistory;
+      const canNavigate =
+        body.action === "tab.back" ? history.canGoBack() : history.canGoForward();
+      if (canNavigate) {
+        if (body.action === "tab.back") history.goBack();
+        else history.goForward();
+      }
+      return automationSuccess({ navigated: canNavigate, state: automationState() });
+    }
+    if (body.action === "tab.reload") {
+      const target = automationTarget(params);
+      target.managed.view.webContents.reload();
+      return automationSuccess({ state: automationState() });
+    }
+    if (body.action === "tab.stop") {
+      const target = automationTarget(params);
+      const loading = target.managed.view.webContents.isLoading();
+      target.managed.view.webContents.stop();
+      publishBrowserState();
+      return automationSuccess({ stopped: loading, state: automationState() });
+    }
+    if (body.action === "tab.mute") {
+      const target = automationTarget(params);
+      const muted =
+        params.muted === undefined
+          ? !target.managed.view.webContents.isAudioMuted()
+          : Boolean(params.muted);
+      target.managed.view.webContents.setAudioMuted(muted);
+      publishBrowserState();
+      return automationSuccess({ muted, state: automationState() });
+    }
+    if (body.action === "bookmarks.list") {
+      return automationSuccess({ bookmarks: automationState().bookmarks });
+    }
+    if (body.action === "bookmark.add") {
+      const url = automationBookmarkUrl(params.url);
+      if (!url) throw new Error("bookmark.add requires a file, HTTP, or HTTPS URL");
+      const name = String(params.name || url).trim().slice(0, 160);
+      const document = readBookmarksDocument(BOOKMARKS_PATH) || { roots: {} };
+      const result = addBookmarkToDocument(document, { url, name });
+      if (result.added) writeBookmarksDocument(result.document);
+      bookmarks = readBookmarks(BOOKMARKS_PATH);
+      publishBrowserState();
+      return automationSuccess({
+        added: result.added,
+        bookmark: result.bookmark || null,
+        bookmarks: automationState().bookmarks,
+      });
+    }
+    if (body.action === "bookmark.remove") {
+      const bookmark = params.id ? automationBookmark(params) : null;
+      const url = automationBookmarkUrl(params.url || bookmark?.url);
+      if (!url) throw new Error("bookmark.remove requires params.id or params.url");
+      const document = readBookmarksDocument(BOOKMARKS_PATH) || { roots: {} };
+      const result = removeBookmarkFromDocument(document, url);
+      if (result.removed) writeBookmarksDocument(result.document);
+      bookmarks = readBookmarks(BOOKMARKS_PATH);
+      publishBrowserState();
+      return automationSuccess({
+        removed: result.removed,
+        bookmarks: automationState().bookmarks,
+      });
+    }
+    if (body.action === "bookmark.open") {
+      const bookmark = automationBookmark(params);
+      if (params.targetId || params.idTarget) {
+        const target = automationTarget({ id: params.targetId || params.idTarget });
+        await navigateOnView(target.managed.view, bookmark.url);
+        if (params.activate !== false) setActiveBrowserView(target.managed.view);
+        return automationSuccess({ bookmark, state: automationState() });
+      }
+      const primary = await createPrimaryBrowserView({ url: bookmark.url });
+      setActiveBrowserView(primary.view);
+      return automationSuccess({
+        bookmark,
+        tab: automationState().tabs.find((tab) => tab.id === primary.targetId) || null,
+        state: automationState(),
+      });
+    }
+    if (body.action === "bookmark.toggle") {
+      const target = automationTarget(params);
+      setActiveBrowserView(target.managed.view);
+      const state = toggleCurrentBookmark();
+      return automationSuccess({
+        bookmarked: Boolean(state.bookmarked),
+        state: automationState(),
+      });
+    }
+    return automationFailure("EGO_AUTOMATION_UNKNOWN_ACTION", body.action);
+  } catch (error) {
+    return automationFailure(
+      error?.code || "EGO_AUTOMATION_FAILED",
+      error?.message || String(error),
+    );
+  }
+}
+
 function currentDownloads() {
   return [...downloadStates.values()]
     .slice(-20)
@@ -2556,6 +2914,7 @@ async function handleBridgeRequest(pathname, body) {
   if (pathname === "/tabs") {
     return { tabs: managedTabState() };
   }
+  if (pathname === "/automation") return handleAutomationRequest(body);
   throw new Error(`unknown Electron bridge path: ${pathname}`);
 }
 

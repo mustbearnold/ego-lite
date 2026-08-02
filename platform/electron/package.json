@@ -54,6 +54,8 @@
     "test:profile-migration": "node test/profile-migration.mjs",
     "test:profile-migration:electron": "xvfb-run --auto-servernum env EGO_LITE_ELECTRON_MIGRATION=1 node test/profile-migration.mjs",
     "test:page-actions": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/page-actions.mjs",
+    "test:automation": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/automation.mjs",
+    "test:standalone-automation": "node test/standalone-automation.mjs",
     "test:snapshot-contract": "node test/snapshot-contract.mjs",
     "test:stale-cdp-probe": "node test/stale-cdp-probe.mjs",
     "test:frame-snapshot": "npm run build:sdk && ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/frame-snapshot.mjs",
@@ -110,6 +112,10 @@
       {
         "from": "../linux/ego-browser.mjs",
         "to": "ego-lite/linux/ego-browser.mjs"
+      },
+      {
+        "from": "../linux/automation.mjs",
+        "to": "ego-lite/linux/automation.mjs"
       },
       {
         "from": "../linux/server-name.mjs",
