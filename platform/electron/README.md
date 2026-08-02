@@ -112,7 +112,7 @@ The named-instance CLI probe verifies that a server name selects an isolated pro
 npm run test:server-name
 ```
 
-The Electron toolbar also provides New tab and Close tab controls, with Ctrl/Cmd+T and Ctrl/Cmd+W shortcuts from either the toolbar or the focused page; closing the final primary tab closes the native window.
+The Electron toolbar also provides New tab and Close tab controls, with Ctrl/Cmd+T and Ctrl/Cmd+W shortcuts from either the toolbar or the focused page; Ctrl/Cmd+Shift+T reopens the most recently closed normal primary tab and restores its tab-group metadata. Agent and private tabs are not added to the reopen stack, which is bounded to the last 20 tabs; closing the final primary tab closes the native window.
 
 Normal primary tabs can be grouped or ungrouped from the toolbar, and an existing group can absorb the active tab. Private and Agent tabs remain outside user tab groups. The detached DOM/bridge probe covers creation, assignment, removal, and the scope guard:
 
@@ -182,7 +182,7 @@ The detached Import data probe clicks the toolbar control through renderer CDP, 
 npm run test:import-data
 ```
 
-The detached tab-control probe verifies button actions, toolbar keyboard shortcuts, active-tab fallback, and the toolbar DOM:
+The detached tab-control probe verifies button actions, toolbar and native-page keyboard shortcuts, active-tab fallback, closed-tab reopening, and the toolbar DOM:
 
 ```bash
 npm run test:tab-controls

@@ -181,6 +181,7 @@ if (process.env.EGO_LITE_DISABLE_GPU === "1") {
 let mainWindow;
 let browserView;
 const managedViews = new Map();
+const closedPrimaryTabs = [];
 const sessionPermissionStates = new WeakMap();
 const sessionExtensionLoads = new WeakMap();
 const sessionExtensionStates = new WeakMap();
@@ -1022,6 +1023,7 @@ function currentBrowserState() {
     serverName: SERVER_NAME,
     fullscreen: Boolean(mainWindow?.isFullScreen()),
     ...currentBookmarkState(),
+    canReopenClosedTab: closedPrimaryTabs.length > 0,
     profiles: currentProfiles(),
     agentTaskState: activeTaskState,
     controlState: currentControlState(),
@@ -1300,6 +1302,15 @@ function installViewListeners(view) {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.setFullScreen(!mainWindow.isFullScreen());
       }
+      return;
+    }
+    if (input.shift && key === "t") {
+      event.preventDefault();
+      void reopenClosedTab().catch((error) => {
+        console.error(
+          `[ego-lite] could not reopen closed tab: ${error?.message || String(error)}`,
+        );
+      });
       return;
     }
     if (!input.shift && key === "f") {
@@ -1813,6 +1824,16 @@ async function closeManagedView(targetId) {
   const wasPrimary = managed.spaceId === null;
   const closedSpaceId = managed.spaceId;
   const wasActive = managed.view === browserView;
+  const closedTabUrl =
+    wasPrimary && !managed.private
+      ? sessionTabUrl(managed.view.webContents.getURL())
+      : null;
+  const closedTabGroup =
+    closedTabUrl && managed.tabGroup ? { ...managed.tabGroup } : null;
+  if (closedTabUrl) {
+    closedPrimaryTabs.push({ url: closedTabUrl, tabGroup: closedTabGroup });
+    while (closedPrimaryTabs.length > 20) closedPrimaryTabs.shift();
+  }
   managedViews.delete(targetId);
   if (wasActive) {
     const fallback =
@@ -1854,6 +1875,18 @@ async function createUserTab({ privateMode = false } = {}) {
     url: "about:blank",
     tabId: `user-${randomUUID()}`,
     privateMode,
+  });
+  setActiveBrowserView(primary.view);
+  return managedTabState();
+}
+
+async function reopenClosedTab() {
+  const closed = closedPrimaryTabs.pop();
+  if (!closed) return managedTabState();
+  const primary = await createPrimaryBrowserView({
+    url: closed.url,
+    tabId: `user-${randomUUID()}`,
+    tabGroup: closed.tabGroup,
   });
   setActiveBrowserView(primary.view);
   return managedTabState();
@@ -2879,6 +2912,7 @@ ipcMain.handle("ego-lite:new-private-tab", () =>
   createUserTab({ privateMode: true }),
 );
 ipcMain.handle("ego-lite:close-tab", () => closeActiveTab());
+ipcMain.handle("ego-lite:reopen-closed-tab", () => reopenClosedTab());
 ipcMain.handle("ego-lite:set-space-ownership", (_event, value) =>
   setTaskSpaceOwnership(value || {}),
 );

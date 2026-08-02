@@ -1498,7 +1498,12 @@
         }
         if (event.altKey || !(event.metaKey || event.ctrlKey)) return;
         const key = event.key.toLowerCase();
-        if (event.shiftKey && key === "n") {
+        if (event.shiftKey && key === "t") {
+          event.preventDefault();
+          window.egoLite.reopenClosedTab().then(applyTabs).catch((error) => {
+            status.textContent = error.message;
+          });
+        } else if (event.shiftKey && key === "n") {
           event.preventDefault();
           newPrivateTab.click();
         } else if (key === "t") {

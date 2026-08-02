@@ -88,7 +88,7 @@ The agent picks up the `ego-browser` skill, opens the page in its own Space, rea
 
 Your browsing data stays on your device. The Linux host stores browser data and task-space metadata locally and does not upload it.
 
-The Linux port uses Chromium's standard accessibility tree for snapshots and backend-node refs, including viewport/full-page scope, action marks, and stable role locators. The closed-source macOS app's custom snapshot engine is not part of this repository, so snapshot wording and some browser chrome details can differ while the helper API remains the same.
+The Linux port uses Chromium's standard accessibility tree for snapshots and backend-node refs, including viewport/full-page scope, action marks, and stable role locators. The Electron shell supports normal tab creation/closing plus Ctrl/Cmd+Shift+T reopening of recently closed normal tabs, including their tab-group metadata; Agent and private tabs remain isolated from that user-tab history. The closed-source macOS app's custom snapshot engine is not part of this repository, so snapshot wording and some browser chrome details can differ while the helper API remains the same.
 
 ## Highlight of ego lite
 

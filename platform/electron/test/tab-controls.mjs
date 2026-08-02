@@ -1,14 +1,28 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { promisify } from "node:util";
 
 const testDir = import.meta.dirname;
 const repoDir = resolve(testDir, "../../..");
 const electronPath = resolve(testDir, "../node_modules/.bin/electron");
 const profileDir = await mkdtemp(join(tmpdir(), "ego-electron-tab-controls-"));
 const bridgeFile = join(profileDir, "ego-lite-bridge.json");
+const fixtureServer = createServer((_request, response) => {
+  response.writeHead(200, { "content-type": "text/html" });
+  response.end(
+    "<!doctype html><title>Reopen fixture</title><p>reopen fixture</p>",
+  );
+});
+await new Promise((resolvePromise, rejectPromise) => {
+  fixtureServer.once("error", rejectPromise);
+  fixtureServer.listen(0, "127.0.0.1", resolvePromise);
+});
+const fixtureUrl = `http://127.0.0.1:${fixtureServer.address().port}/reopen`;
 let electron;
+const execFileAsync = promisify(execFile);
 
 class CdpConnection {
   constructor(url) {
@@ -85,6 +99,10 @@ function startElectron() {
       EGO_LITE_STATE_PATH: join(profileDir, "task-spaces.json"),
       EGO_LITE_DISABLE_GPU: "1",
       EGO_LITE_SKIP_MIGRATION: "1",
+      ELECTRON_DISABLE_SANDBOX: "1",
+      ELECTRON_OZONE_PLATFORM_HINT: "x11",
+      WAYLAND_DISPLAY: "",
+      XDG_SESSION_TYPE: "x11",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -112,6 +130,27 @@ async function stopElectron(instance) {
 
 async function readBridge() {
   return JSON.parse(await readFile(bridgeFile, "utf8"));
+}
+
+async function sendNativeKey(chord) {
+  const { stdout } = await execFileAsync("xdotool", [
+    "search",
+    "--onlyvisible",
+    "--name",
+    "^ego lite$",
+  ]);
+  const windowId = stdout.trim().split(/\s+/).filter(Boolean)[0];
+  if (!windowId) throw new Error("ego lite X11 window not found");
+  await execFileAsync("xdotool", ["windowfocus", "--sync", windowId]);
+  await execFileAsync("xdotool", [
+    "mousemove",
+    "--window",
+    windowId,
+    "400",
+    "300",
+  ]);
+  await execFileAsync("xdotool", ["click", "1"]);
+  await execFileAsync("xdotool", ["key", "--window", windowId, chord]);
 }
 
 async function bridgeRequest(bridge, pathname, body = {}) {
@@ -248,6 +287,84 @@ try {
       const tabs = result.tabs?.filter((tab) => tab.spaceId === null) || [];
       return tabs.length === 2 ? tabs : null;
     });
+    await evaluate(
+      connection,
+      attached.sessionId,
+      `window.egoLite.navigate(${JSON.stringify(fixtureUrl)})`,
+    );
+    const navigatedTab = await waitFor("fixture navigation", async () => {
+      const result = await bridgeRequest(bridge, "/tabs");
+      return result.tabs?.find(
+        (tab) => tab.active && tab.url === fixtureUrl,
+      );
+    });
+    await evaluate(
+      connection,
+      attached.sessionId,
+      "window.egoLite.setTabGroup({title: 'Reopen group', color: 'blue'})",
+    );
+    await evaluate(
+      connection,
+      attached.sessionId,
+      "window.dispatchEvent(new KeyboardEvent('keydown', {key: 'w', ctrlKey: true, bubbles: true, cancelable: true})); true",
+    );
+    const afterFixtureClose = await waitFor("fixture tab close", async () => {
+      const result = await bridgeRequest(bridge, "/tabs");
+      const tabs = result.tabs?.filter((tab) => tab.spaceId === null) || [];
+      return tabs.length === 1 && tabs[0].url !== fixtureUrl ? tabs : null;
+    });
+    const canReopen = await evaluate(
+      connection,
+      attached.sessionId,
+      "window.egoLite.getBrowserState().then((state) => state.canReopenClosedTab === true)",
+    );
+    await evaluate(
+      connection,
+      attached.sessionId,
+      "window.dispatchEvent(new KeyboardEvent('keydown', {key: 't', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true})); true",
+    );
+    const afterReopen = await waitFor("reopened tab", async () => {
+      const result = await bridgeRequest(bridge, "/tabs");
+      const tabs = result.tabs?.filter((tab) => tab.spaceId === null) || [];
+      return tabs.length === 2 && tabs.some(
+        (tab) => tab.active && tab.url === fixtureUrl,
+      )
+        ? tabs
+        : null;
+    });
+    const reopenedTab = afterReopen.find((tab) => tab.active);
+    if (
+      reopenedTab?.tabGroup?.title !== "Reopen group" ||
+      reopenedTab?.tabGroup?.color !== "blue"
+    ) {
+      throw new Error(
+        `reopened tab lost its group: ${JSON.stringify(reopenedTab)}`,
+      );
+    }
+    const canReopenAfterReopen = await evaluate(
+      connection,
+      attached.sessionId,
+      "window.egoLite.getBrowserState().then((state) => state.canReopenClosedTab === false)",
+    );
+    await sendNativeKey("ctrl+w");
+    const afterNativeClose = await waitFor("native tab close", async () => {
+      const result = await bridgeRequest(bridge, "/tabs");
+      const tabs = result.tabs?.filter((tab) => tab.spaceId === null) || [];
+      return tabs.length === 1 && tabs[0].url !== fixtureUrl ? tabs : null;
+    });
+    await sendNativeKey("ctrl+shift+t");
+    const afterNativeReopen = await waitFor(
+      "native reopened tab",
+      async () => {
+        const result = await bridgeRequest(bridge, "/tabs");
+        const tabs = result.tabs?.filter((tab) => tab.spaceId === null) || [];
+        return tabs.length === 2 && tabs.some(
+          (tab) => tab.active && tab.url === fixtureUrl,
+        )
+          ? tabs
+          : null;
+      },
+    );
     console.log(
       JSON.stringify({
         controls,
@@ -259,6 +376,14 @@ try {
         })),
         afterKeyboardClose,
         keyboardNewTabCount: afterKeyboardNew.length,
+        navigatedTargetId: navigatedTab.targetId,
+        afterFixtureClose,
+        canReopen,
+        reopenedUrl: reopenedTab?.url,
+        reopenedGroup: reopenedTab?.tabGroup,
+        canReopenAfterReopen,
+        afterNativeClose,
+        nativeReopenedUrl: afterNativeReopen.find((tab) => tab.active)?.url,
       }),
     );
   } finally {
@@ -276,4 +401,5 @@ try {
     maxRetries: 10,
     retryDelay: 100,
   });
+  await new Promise((resolvePromise) => fixtureServer.close(resolvePromise));
 }
