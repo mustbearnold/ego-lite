@@ -39,9 +39,20 @@ if (process.env.EGO_LITE_DISABLE_GPU === "1") {
 let mainWindow;
 let browserView;
 const managedViews = new Map();
+const sessionPermissionStates = new WeakMap();
 let bridgeServer;
 let bridgeToken;
 const bridgeFile = join(PROFILE_DIR, "ego-lite-bridge.json");
+
+const permissionAliases = {
+  clipboardReadWrite: ["clipboard-read", "clipboard-sanitized-write"],
+  clipboardSanitizedWrite: ["clipboard-sanitized-write"],
+  audioCapture: ["media"],
+  camera: ["media"],
+  displayCapture: ["display-capture"],
+  microphone: ["media"],
+  videoCapture: ["media"],
+};
 
 function normalizeUrl(value) {
   const input = String(value || "").trim();
@@ -126,11 +137,97 @@ function enableAccessibility(view) {
   }
 }
 
+function permissionOrigin(value) {
+  try {
+    return new URL(String(value || "")).origin;
+  } catch {
+    return String(value || "");
+  }
+}
+
+function permissionNames(permission) {
+  return permissionAliases[permission] || [permission];
+}
+
+function permissionKey(origin, permission) {
+  return `${permissionOrigin(origin)}\n${permission}`;
+}
+
+function installPermissionHandlers(webSession) {
+  const existing = sessionPermissionStates.get(webSession);
+  if (existing) return existing;
+
+  const state = { rules: new Map() };
+  sessionPermissionStates.set(webSession, state);
+  webSession.setPermissionCheckHandler(
+    (webContents, permission, requestingOrigin, details) => {
+      const origin =
+        requestingOrigin || details?.requestingUrl || webContents?.getURL();
+      return state.rules.get(permissionKey(origin, permission)) === "granted";
+    },
+  );
+  webSession.setPermissionRequestHandler(
+    (webContents, permission, callback, details) => {
+      const origin = details?.requestingUrl || webContents?.getURL();
+      callback(
+        state.rules.get(permissionKey(origin, permission)) === "granted",
+      );
+    },
+  );
+  return state;
+}
+
+function updatePermissionRules(state, origin, permissions, setting) {
+  for (const permission of permissions) {
+    for (const name of permissionNames(permission)) {
+      const key = permissionKey(origin, name);
+      if (setting === "prompt") state.rules.delete(key);
+      else state.rules.set(key, setting);
+    }
+  }
+}
+
+function applyPermissionCommand({ targetId, method, params = {} }) {
+  const managed = managedViews.get(targetId);
+  if (!managed) throw new Error(`Electron target not found: ${targetId}`);
+  const state = installPermissionHandlers(managed.view.webContents.session);
+  if (method === "Browser.resetPermissions") {
+    state.rules.clear();
+    return {};
+  }
+
+  const origin = params.origin;
+  if (typeof origin !== "string" || origin.trim() === "") {
+    throw new Error(`${method} requires an origin`);
+  }
+  if (method === "Browser.grantPermissions") {
+    if (!Array.isArray(params.permissions)) {
+      throw new Error("Browser.grantPermissions requires permissions");
+    }
+    updatePermissionRules(state, origin, params.permissions, "granted");
+    return {};
+  }
+  if (method === "Browser.setPermission") {
+    const permission = params.permission?.name;
+    const setting = params.setting;
+    if (typeof permission !== "string" || !permission) {
+      throw new Error("Browser.setPermission requires permission.name");
+    }
+    if (!["granted", "denied", "prompt"].includes(setting)) {
+      throw new Error("Browser.setPermission requires a valid setting");
+    }
+    updatePermissionRules(state, origin, [permission], setting);
+    return {};
+  }
+  throw new Error(`unsupported permission command: ${method}`);
+}
+
 async function registerManagedView(
   view,
   { spaceId = null, tabId = null } = {},
 ) {
   installViewListeners(view);
+  installPermissionHandlers(view.webContents.session);
   const targetId = await targetIdForView(view);
   managedViews.set(targetId, { view, spaceId, tabId });
   return targetId;
@@ -201,6 +298,7 @@ async function handleBridgeRequest(pathname, body) {
     return { activated: true };
   }
   if (pathname === "/close-tab") return closeManagedView(body.targetId);
+  if (pathname === "/permissions") return applyPermissionCommand(body);
   if (pathname === "/tabs") {
     return {
       tabs: [...managedViews.entries()].map(([targetId, managed]) => ({

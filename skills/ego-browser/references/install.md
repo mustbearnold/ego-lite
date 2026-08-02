@@ -50,7 +50,7 @@ ego-browser --doctor
 
 The browser profile is stored under `~/.local/share/ego-lite/chromium-profile`; task-space metadata is stored under `~/.local/state/ego-lite/task-spaces.json`. Set `EGO_LITE_HEADLESS=1` for CI or machines without a display. Set `EGO_BROWSER_EXECUTABLE` when Chromium is installed at a non-standard path.
 
-The Linux host uses Chromium's standard accessibility tree for semantic snapshots. It preserves the existing SDK, task-space ownership, CDP, screenshots, downloads, uploads, and locator behavior, but it cannot reproduce the closed-source macOS app's custom snapshot engine or automatic Chrome-profile migration.
+The Linux host uses Chromium's standard accessibility tree for semantic snapshots. It preserves the existing SDK, task-space ownership, browser permission CDP, screenshots, downloads, uploads, and locator behavior, but it cannot reproduce the closed-source macOS app's custom snapshot engine or automatic Chrome-profile migration.
 
 For a self-contained Electron package with embedded Chromium, run `npm install` and `npm run package:appimage` from `platform/electron`. The AppImage includes the Linux host, SDK, and skill resources; launch it normally for the desktop browser or pass `--cli` for the bundled `ego-browser` command path.
 

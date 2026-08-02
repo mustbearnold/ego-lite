@@ -20,8 +20,13 @@ const DEFAULT_STATE_PATH = join(
   "ego-lite",
   "task-spaces.json",
 );
-const HOST_VERSION = "linux-host/0.2.0";
+const HOST_VERSION = "linux-host/0.3.0";
 const nativeFetch = globalThis.fetch?.bind(globalThis);
+const CONTEXT_SCOPED_BROWSER_METHODS = new Set([
+  "Browser.grantPermissions",
+  "Browser.resetPermissions",
+  "Browser.setPermission",
+]);
 
 const HELP = `ego-browser (Linux host)
 
@@ -649,15 +654,17 @@ class LinuxEgoHost {
       return;
     }
     if (
-      message.method === "Browser.grantPermissions" ||
-      message.method === "Browser.setPermission"
+      this.electronBridge &&
+      CONTEXT_SCOPED_BROWSER_METHODS.has(message.method)
     ) {
-      queueMicrotask(() =>
-        this.onSendCDPMessageError?.(
-          `${message.method} is not supported by the Linux task-space bridge`,
-          "EGO_CDP_CHANNEL_UNAVAILABLE",
-        ),
-      );
+      const operation = this.electronBridge.request("/permissions", {
+        targetId: this.selectedTargetId,
+        method: message.method,
+        params: message.params || {},
+      });
+      operation
+        .then((result) => this.emitCdpResponse(message, result))
+        .catch((error) => this.emitCdpResponse(message, null, error));
       return;
     }
     if (
@@ -698,10 +705,14 @@ class LinuxEgoHost {
       return;
     }
     let outgoingPayload = String(payload);
-    if (message.method === "Browser.setDownloadBehavior") {
+    if (
+      CONTEXT_SCOPED_BROWSER_METHODS.has(message.method) ||
+      message.method === "Browser.setDownloadBehavior"
+    ) {
       const contextId = this.currentSpace()?.contextId || this.defaultContextId;
       if (
         contextId &&
+        !this.isElectron &&
         !(
           this.taskSpaceMode === "tabs" && contextId === this.defaultContextId
         ) &&
