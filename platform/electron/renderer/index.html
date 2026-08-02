@@ -711,6 +711,19 @@
           label.title = download.path || download.url || download.filename;
           row.append(label);
           if (download.state === "completed" && download.path) {
+            const open = document.createElement("button");
+            open.type = "button";
+            open.textContent = "Open";
+            open.setAttribute("aria-label", `Open downloaded file: ${download.filename}`);
+            open.addEventListener("click", async () => {
+              try {
+                await window.egoLite.openDownload(download.id);
+              } catch (error) {
+                status.textContent = error.message;
+              }
+            });
+            row.append(open);
+
             const show = document.createElement("button");
             show.type = "button";
             show.textContent = "Show";

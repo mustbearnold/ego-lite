@@ -26,6 +26,7 @@ import {
   profileLooksUsable,
 } from "./migration-discovery.mjs";
 import { readBookmarks } from "./bookmarks.mjs";
+import { openDownloadPath } from "./downloads.mjs";
 import { createUpdateController } from "./update.mjs";
 
 const MAIN_DIR = dirname(fileURLToPath(import.meta.url));
@@ -2147,6 +2148,10 @@ ipcMain.handle("ego-lite:show-download", (_event, id) => {
   if (!download?.path) throw new Error("download is not ready");
   shell.showItemInFolder(download.path);
   return { shown: true };
+});
+ipcMain.handle("ego-lite:open-download", async (_event, id) => {
+  const download = downloadStates.get(String(id));
+  return openDownloadPath(download?.path, (path) => shell.openPath(path));
 });
 ipcMain.handle("ego-lite:set-extension", (_event, value) =>
   setExtensionEnabled(value || {}),

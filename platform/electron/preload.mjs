@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld("egoLite", {
   switchProfile: (value) => ipcRenderer.invoke("ego-lite:switch-profile", value),
   createProfile: (value) => ipcRenderer.invoke("ego-lite:create-profile", value),
   showDownload: (id) => ipcRenderer.invoke("ego-lite:show-download", id),
+  openDownload: (id) => ipcRenderer.invoke("ego-lite:open-download", id),
   setExtension: (value) => ipcRenderer.invoke("ego-lite:set-extension", value),
   importData: () => ipcRenderer.invoke("ego-lite:import-data"),
   setTabGroup: (value) => ipcRenderer.invoke("ego-lite:set-tab-group", value),

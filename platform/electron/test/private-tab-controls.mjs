@@ -275,7 +275,7 @@ try {
       const value = await evaluate(
         connection,
         attached.sessionId,
-        "(() => ({visible: !document.querySelector('#download-menu').hidden, labels: [...document.querySelectorAll('#download-list .download-row > span')].map((node) => node.textContent)}))()",
+        "(() => ({visible: !document.querySelector('#download-menu').hidden, labels: [...document.querySelectorAll('#download-list .download-row > span')].map((node) => node.textContent), buttons: [...document.querySelectorAll('#download-list .download-row button')].map((node) => node.textContent)}))()",
       );
       return value?.labels?.some((label) =>
         /fixture\.txt · completed/.test(label),
@@ -283,6 +283,9 @@ try {
         ? value
         : null;
     });
+    if (!downloadFeatures.buttons.includes("Open")) {
+      throw new Error("download toolbar is missing the Open action");
+    }
     const downloaded = await readFile(
       join(profileDir, "downloads", "fixture.txt"),
       "utf8",
