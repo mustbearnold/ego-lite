@@ -24,6 +24,16 @@ cd ../..
 EGO_LITE_HEADLESS=1 node platform/linux/ego-browser.mjs --doctor
 ```
 
+For an embedded Chromium desktop package, use the Electron project in
+`platform/electron`. It produces an unpacked Linux app or a portable AppImage
+and includes the host, SDK, and skill resources.
+
+```bash
+cd platform/electron
+npm install
+npm run package:appimage
+```
+
 ## Runtime configuration
 
 `EGO_BROWSER_EXECUTABLE` selects Chromium/Chrome explicitly. `EGO_LITE_PROFILE_DIR` changes the persistent browser profile, and `EGO_LITE_STATE_PATH` changes task-space metadata. `EGO_LITE_HEADLESS=1` enables headless Chromium; `EGO_LITE_CHROMIUM_ARGS_JSON` accepts an extra JSON array of Chromium arguments.
@@ -34,4 +44,4 @@ The default profile is separate from an existing Chrome profile. Linux Chrome pa
 
 The helper SDK, CDP transport, task-space ownership methods, screenshots, downloads, uploads, locators, and semantic refs are shared with the macOS runtime. Snapshots are rendered from Chromium's `Accessibility.getFullAXTree`, so they are compatible with the existing backend-node resolver but can differ in wording and coverage from the macOS app's custom snapshot engine.
 
-`Browser.grantPermissions` and `Browser.setPermission` remain intentionally unavailable through the task-space bridge, matching the SDK contract. The visible Linux browser is stock Chromium rather than the upstream closed-source ego lite Chromium shell, so app-specific browser chrome and Chrome-data migration are outside this port.
+`Browser.grantPermissions` and `Browser.setPermission` remain intentionally unavailable through the task-space bridge, matching the SDK contract. The standalone host uses Chromium browser contexts for task spaces. The Electron package uses separate persistent `BrowserView` sessions and an authenticated loopback bridge because Electron's public CDP endpoint does not expose browser-context creation. The visible Linux browser is stock Chromium/Electron rather than the upstream closed-source ego lite Chromium shell, so app-specific browser chrome and Chrome-data migration are outside this port.

@@ -1,0 +1,71 @@
+{
+  "name": "ego-lite-electron",
+  "version": "0.1.0",
+  "description": "Electron desktop package for the ego lite Linux host",
+  "author": "ego lite contributors",
+  "desktopName": "ego-lite",
+  "private": true,
+  "type": "module",
+  "main": "main.mjs",
+  "scripts": {
+    "build:sdk": "npm --prefix ../../package/ego-browser run build",
+    "start": "electron .",
+    "package:dir": "npm run build:sdk && electron-builder --linux dir",
+    "package:appimage": "npm run build:sdk && electron-builder --linux AppImage"
+  },
+  "devDependencies": {
+    "electron": "43.2.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "com.citrolabs.ego-lite",
+    "productName": "ego lite",
+    "executableName": "ego-lite",
+    "artifactName": "ego-lite-${version}.${ext}",
+    "asar": true,
+    "files": [
+      "main.mjs",
+      "preload.mjs",
+      "renderer/**"
+    ],
+    "extraResources": [
+      {
+        "from": "../linux/ego-browser.mjs",
+        "to": "ego-lite/linux/ego-browser.mjs"
+      },
+      {
+        "from": "../../package/ego-browser/dist/out",
+        "to": "ego-lite/sdk"
+      },
+      {
+        "from": "../../skills/ego-browser",
+        "to": "ego-lite/ego-browser"
+      },
+      {
+        "from": "../../assets/logo.png",
+        "to": "ego-lite/logo.png"
+      }
+    ],
+    "linux": {
+      "target": [
+        {
+          "target": "dir",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "category": "Network;WebBrowser;",
+      "synopsis": "Chromium browser for human and AI-agent workflows",
+      "description": "Electron desktop package for the ego lite Linux host",
+      "syncDesktopName": true,
+      "icon": "../../assets/logo.png"
+    }
+  }
+}

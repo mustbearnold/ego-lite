@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { access, mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { constants, existsSync } from "node:fs";
+import { constants, existsSync, realpathSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -20,7 +20,8 @@ const DEFAULT_STATE_PATH = join(
   "ego-lite",
   "task-spaces.json",
 );
-const HOST_VERSION = "linux-host/0.1.0";
+const HOST_VERSION = "linux-host/0.2.0";
+const nativeFetch = globalThis.fetch?.bind(globalThis);
 
 const HELP = `ego-browser (Linux host)
 
@@ -160,12 +161,47 @@ class BrowserConnection {
   }
 }
 
+class ElectronBridge {
+  constructor({ port, token }) {
+    this.url = `http://127.0.0.1:${port}`;
+    this.token = token;
+  }
+
+  async request(path, body = {}) {
+    if (!nativeFetch) fail("Node fetch is unavailable for the Electron bridge");
+    const response = await nativeFetch(`${this.url}${path}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-ego-lite-token": this.token,
+      },
+      body: JSON.stringify(body),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(
+        payload.error || `Electron bridge request failed: ${path}`,
+      );
+      error.code = response.status;
+      throw error;
+    }
+    return payload;
+  }
+}
+
 class LinuxEgoHost {
-  constructor(connection, { profileDir, statePath, browserVersion }) {
+  constructor(
+    connection,
+    { profileDir, statePath, browserVersion, browserUserAgent, electronBridge },
+  ) {
     this.connection = connection;
     this.profileDir = profileDir;
     this.statePath = statePath;
     this.browserVersion = browserVersion;
+    this.browserUserAgent = browserUserAgent;
+    this.electronBridge = electronBridge;
+    this.isElectron = /Electron\//.test(browserUserAgent || "");
+    this.taskSpaceMode = this.isElectron ? "tabs" : "contexts";
     this.onCDPMessage = null;
     this.onSendCDPMessageError = null;
     this.selectedSpaceId = null;
@@ -181,6 +217,11 @@ class LinuxEgoHost {
     const contexts = await this.connection.request("Target.getBrowserContexts");
     this.contextIds = new Set(contexts.browserContextIds || []);
     this.defaultContextId = contexts.defaultBrowserContextId || null;
+    if (this.taskSpaceMode === "tabs") {
+      for (const space of this.state.spaces) {
+        space.mode = "tab";
+      }
+    }
     await this.ensureDefaultTab();
     return this;
   }
@@ -218,9 +259,7 @@ class LinuxEgoHost {
     ) {
       return;
     }
-    const created = await this.connection.request("Target.createTarget", {
-      url: "about:blank",
-    });
+    const created = await this.createBrowserTab("about:blank");
     this.selectedTargetId = created.targetId;
   }
 
@@ -245,13 +284,29 @@ class LinuxEgoHost {
   }
 
   async ensureSpaceContext(space) {
+    if (this.isTabScopedSpace(space)) {
+      space.mode = "tab";
+      space.contextId = this.defaultContextId;
+      await this.ensureSpaceTab(space);
+      return;
+    }
     if (space.contextId && this.contextIds.has(space.contextId)) return;
-    const result = await this.connection.request(
-      "Target.createBrowserContext",
-      {
+    let result;
+    try {
+      result = await this.connection.request("Target.createBrowserContext", {
         disposeOnDetach: false,
-      },
-    );
+      });
+    } catch (error) {
+      if (!this.defaultContextId || !isBrowserContextUnavailable(error)) {
+        throw error;
+      }
+      this.taskSpaceMode = "tabs";
+      space.mode = "tab";
+      space.contextId = this.defaultContextId;
+      await this.ensureSpaceTab(space);
+      return;
+    }
+    space.mode = "context";
     space.contextId = result.browserContextId;
     this.contextIds.add(space.contextId);
     await this.saveState();
@@ -260,10 +315,43 @@ class LinuxEgoHost {
       browserContextId: space.contextId,
     });
     this.selectedTargetId = created.targetId;
-    await this.connection.request("Target.activateTarget", {
-      targetId: created.targetId,
-    });
+    await this.activateTarget(created.targetId);
     await this.copyDefaultCookies(created.targetId).catch(() => {});
+  }
+
+  async ensureSpaceTab(space) {
+    const targetIds = this.spaceTargetIds(space);
+    const targets = await this.allTargets();
+    let activeTargetId = null;
+    if (this.electronBridge && targetIds.length > 0) {
+      const bridgeTabs = await this.electronBridge.request("/tabs");
+      activeTargetId = bridgeTabs.tabs?.find(
+        (tab) => targetIds.includes(tab.targetId) && tab.active,
+      )?.targetId;
+    }
+    const existing =
+      targets.find(
+        (target) =>
+          target.type === "page" && target.targetId === activeTargetId,
+      ) ||
+      [...targetIds]
+        .reverse()
+        .map((targetId) =>
+          targets.find(
+            (target) => target.type === "page" && target.targetId === targetId,
+          ),
+        )
+        .find(Boolean);
+    if (existing) {
+      this.selectedTargetId = existing.targetId;
+      await this.activateTarget(existing.targetId);
+      return;
+    }
+    const created = await this.createBrowserTab("about:blank", space);
+    this.rememberSpaceTarget(space, created.targetId);
+    this.selectedTargetId = created.targetId;
+    await this.saveState();
+    await this.activateTarget(created.targetId);
   }
 
   async copyDefaultCookies(targetId) {
@@ -286,7 +374,10 @@ class LinuxEgoHost {
           .filter(
             (target) =>
               target.type === "page" &&
-              target.browserContextId === space.contextId,
+              !isElectronShellTarget(target) &&
+              (this.isTabScopedSpace(space)
+                ? this.spaceTargetIds(space).includes(target.targetId)
+                : target.browserContextId === space.contextId),
           )
           .map((target) => target.title || "")
           .filter(Boolean),
@@ -306,6 +397,8 @@ class LinuxEgoHost {
       ownership: "agent",
       createdAt: new Date().toISOString(),
       contextId: null,
+      mode: this.taskSpaceMode === "tabs" ? "tab" : "context",
+      tabTargetIds: [],
     };
     this.state.spaces.push(space);
     await this.saveState();
@@ -375,7 +468,11 @@ class LinuxEgoHost {
 
   async closeTaskSpace() {
     const space = this.requireSelectedSpace();
-    if (space.contextId && this.contextIds.has(space.contextId)) {
+    if (this.isTabScopedSpace(space)) {
+      for (const targetId of this.spaceTargetIds(space)) {
+        await this.closeTarget(targetId).catch(() => {});
+      }
+    } else if (space.contextId && this.contextIds.has(space.contextId)) {
       await this.connection.request("Target.disposeBrowserContext", {
         browserContextId: space.contextId,
       });
@@ -391,21 +488,42 @@ class LinuxEgoHost {
   }
 
   async listTabs() {
+    const space = this.currentSpace();
     const contextId = await this.selectedContextId();
     const effectiveContextId = contextId || this.defaultContextId;
+    const scopedTargetIds =
+      space && this.isTabScopedSpace(space)
+        ? new Set(this.spaceTargetIds(space))
+        : null;
     const targets = await this.allTargets();
     let tabs = targets.filter((target) => {
       if (target.type !== "page") return false;
+      if (isElectronShellTarget(target)) return false;
+      if (scopedTargetIds && !scopedTargetIds.has(target.targetId)) {
+        return false;
+      }
+      if (scopedTargetIds) return true;
       return target.browserContextId === effectiveContextId;
     });
     if (tabs.length === 0) {
-      const created = await this.connection.request("Target.createTarget", {
-        url: "about:blank",
-        ...(contextId ? { browserContextId: contextId } : {}),
-      });
+      const created = await this.createBrowserTab(
+        "about:blank",
+        space,
+        contextId,
+      );
+      if (space && this.isTabScopedSpace(space)) {
+        this.rememberSpaceTarget(space, created.targetId);
+        scopedTargetIds?.add(created.targetId);
+        await this.saveState();
+      }
       this.selectedTargetId = created.targetId;
       tabs = (await this.allTargets()).filter((target) => {
         if (target.type !== "page") return false;
+        if (isElectronShellTarget(target)) return false;
+        if (scopedTargetIds && !scopedTargetIds.has(target.targetId)) {
+          return false;
+        }
+        if (scopedTargetIds) return true;
         return target.browserContextId === effectiveContextId;
       });
     }
@@ -428,14 +546,18 @@ class LinuxEgoHost {
 
   async createTab(url = "about:blank") {
     const contextId = await this.selectedContextId();
-    const result = await this.connection.request("Target.createTarget", {
+    const result = await this.createBrowserTab(
       url,
-      ...(contextId ? { browserContextId: contextId } : {}),
-    });
+      this.currentSpace(),
+      contextId,
+    );
+    const space = this.currentSpace();
+    if (space && this.isTabScopedSpace(space)) {
+      this.rememberSpaceTarget(space, result.targetId);
+      await this.saveState();
+    }
     this.selectedTargetId = result.targetId;
-    await this.connection.request("Target.activateTarget", {
-      targetId: result.targetId,
-    });
+    await this.activateTarget(result.targetId);
     return { targetId: result.targetId };
   }
 
@@ -456,11 +578,26 @@ class LinuxEgoHost {
     await this.connection
       .request("Accessibility.enable", {}, sessionId)
       .catch(() => {});
-    const result = await this.connection.request(
+    let result = await this.connection.request(
       "Accessibility.getFullAXTree",
       {},
       sessionId,
     );
+    for (
+      let attempt = 0;
+      attempt < 20 && (result.nodes?.length || 0) <= 3;
+      attempt += 1
+    ) {
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+      const retry = await this.connection.request(
+        "Accessibility.getFullAXTree",
+        {},
+        sessionId,
+      );
+      if ((retry.nodes?.length || 0) > (result.nodes?.length || 0)) {
+        result = retry;
+      }
+    }
     if (process.env.EGO_LITE_DEBUG === "1") {
       process.stderr.write(
         `[ego-lite-linux] snapshot target=${targetId} session=${sessionId} nodes=${result.nodes?.length || 0}\n`,
@@ -535,10 +672,41 @@ class LinuxEgoHost {
     ) {
       this.selectedTargetId = null;
     }
+    if (
+      this.electronBridge &&
+      (message.method === "Target.activateTarget" ||
+        message.method === "Target.closeTarget") &&
+      message.params?.targetId
+    ) {
+      const targetId = message.params.targetId;
+      if (message.method === "Target.closeTarget") {
+        this.removeSpaceTarget(targetId);
+        void this.saveState();
+      }
+      const operation =
+        message.method === "Target.activateTarget"
+          ? this.activateTarget(targetId)
+          : this.closeTarget(targetId);
+      operation
+        .then(() =>
+          this.emitCdpResponse(
+            message,
+            message.method === "Target.closeTarget" ? { success: true } : {},
+          ),
+        )
+        .catch((error) => this.emitCdpResponse(message, null, error));
+      return;
+    }
     let outgoingPayload = String(payload);
     if (message.method === "Browser.setDownloadBehavior") {
       const contextId = this.currentSpace()?.contextId || this.defaultContextId;
-      if (contextId && !message.params?.browserContextId) {
+      if (
+        contextId &&
+        !(
+          this.taskSpaceMode === "tabs" && contextId === this.defaultContextId
+        ) &&
+        !message.params?.browserContextId
+      ) {
         message.params = {
           ...(message.params || {}),
           browserContextId: contextId,
@@ -603,6 +771,91 @@ class LinuxEgoHost {
     );
   }
 
+  async createBrowserTab(url, space = null, contextId = undefined) {
+    if (this.isElectron) {
+      if (!this.electronBridge) {
+        fail(
+          "Electron bridge is unavailable. Restart the ego lite Electron app before creating tabs.",
+        );
+      }
+      return this.electronBridge.request("/create-tab", {
+        spaceId: space?.id ?? null,
+        url,
+      });
+    }
+    return this.connection.request("Target.createTarget", {
+      url,
+      ...this.browserContextParams(contextId),
+    });
+  }
+
+  async activateTarget(targetId) {
+    if (this.isElectron) {
+      if (!this.electronBridge) {
+        fail(
+          "Electron bridge is unavailable. Restart the ego lite Electron app before activating tabs.",
+        );
+      }
+      await this.electronBridge.request("/activate-tab", { targetId });
+      return;
+    }
+    await this.connection.request("Target.activateTarget", { targetId });
+  }
+
+  async closeTarget(targetId) {
+    if (this.isElectron) {
+      if (!this.electronBridge) {
+        fail(
+          "Electron bridge is unavailable. Restart the ego lite Electron app before closing tabs.",
+        );
+      }
+      await this.electronBridge.request("/close-tab", { targetId });
+      return;
+    }
+    await this.connection.request("Target.closeTarget", { targetId });
+  }
+
+  isTabScopedSpace(space) {
+    return this.taskSpaceMode === "tabs" || space?.mode === "tab";
+  }
+
+  spaceTargetIds(space) {
+    return Array.isArray(space?.tabTargetIds) ? space.tabTargetIds : [];
+  }
+
+  rememberSpaceTarget(space, targetId) {
+    space.tabTargetIds = [
+      ...new Set([...this.spaceTargetIds(space), targetId]),
+    ];
+  }
+
+  removeSpaceTarget(targetId) {
+    for (const space of this.state.spaces) {
+      space.tabTargetIds = this.spaceTargetIds(space).filter(
+        (candidate) => candidate !== targetId,
+      );
+    }
+  }
+
+  emitCdpResponse(message, result, error = null) {
+    this.connection.onEvent(
+      JSON.stringify({
+        id: message.id,
+        ...(error
+          ? { error: { code: -32000, message: error.message || String(error) } }
+          : { result }),
+      }),
+    );
+  }
+
+  browserContextParams(contextId) {
+    if (!contextId) return {};
+    if (this.taskSpaceMode === "tabs" && contextId === this.defaultContextId) {
+      return {};
+    }
+    return { browserContextId: contextId };
+  }
+
   error(code, message) {
     return { error: message, error_code: code };
   }
@@ -612,6 +865,17 @@ function axValue(value) {
   if (value && typeof value === "object" && "value" in value)
     return value.value;
   return value;
+}
+
+function isElectronShellTarget(target) {
+  return String(target?.url || "").includes("/renderer/index.html");
+}
+
+function isBrowserContextUnavailable(error) {
+  return (
+    error?.code === -32000 &&
+    /browser context/i.test(String(error?.message || ""))
+  );
 }
 
 function renderAccessibilityTree(nodes, options) {
@@ -697,6 +961,21 @@ async function canConnect(endpoint) {
   } catch {
     connection.close();
     return false;
+  }
+}
+
+async function readElectronBridge(profileDir) {
+  try {
+    const bridge = JSON.parse(
+      await readFile(join(profileDir, "ego-lite-bridge.json"), "utf8"),
+    );
+    if (!Number.isInteger(bridge.port) || typeof bridge.token !== "string") {
+      return null;
+    }
+    return new ElectronBridge(bridge);
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+    return null;
   }
 }
 
@@ -804,10 +1083,15 @@ async function connectToChromium() {
   const version = await connection
     .request("Browser.getVersion")
     .catch(() => ({}));
+  const electronBridge = /Electron\//.test(version.userAgent || "")
+    ? await readElectronBridge(profileDir)
+    : null;
   const host = await new LinuxEgoHost(connection, {
     profileDir,
     statePath,
     browserVersion: version.product || "Chromium",
+    browserUserAgent: version.userAgent || "",
+    electronBridge,
   }).init();
   return host;
 }
@@ -864,8 +1148,8 @@ function parseArgs(argv) {
   return { command, sdkPath };
 }
 
-async function main() {
-  const { command, sdkPath } = parseArgs(process.argv.slice(2));
+export async function runHost(argv = process.argv.slice(2)) {
+  const { command, sdkPath } = parseArgs(argv);
   if (command === "help") {
     process.stdout.write(HELP);
     return 0;
@@ -892,6 +1176,7 @@ async function main() {
         {
           platform: "linux",
           browser: host.browserVersion,
+          taskSpaceMode: host.taskSpaceMode,
           executable:
             process.env.EGO_BROWSER_EXECUTABLE || "auto-detected Chromium",
           profileDir: host.profileDir,
@@ -935,9 +1220,24 @@ async function main() {
   }
 }
 
-try {
-  process.exitCode = await main();
-} catch (error) {
-  process.stderr.write(`${error?.stack || error?.message || String(error)}\n`);
-  process.exitCode = 1;
+function isDirectExecution() {
+  try {
+    return (
+      realpathSync(process.argv[1]) ===
+      realpathSync(fileURLToPath(import.meta.url))
+    );
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectExecution()) {
+  try {
+    process.exitCode = await runHost();
+  } catch (error) {
+    process.stderr.write(
+      `${error?.stack || error?.message || String(error)}\n`,
+    );
+    process.exitCode = 1;
+  }
 }

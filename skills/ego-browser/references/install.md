@@ -52,6 +52,8 @@ The browser profile is stored under `~/.local/share/ego-lite/chromium-profile`; 
 
 The Linux host uses Chromium's standard accessibility tree for semantic snapshots. It preserves the existing SDK, task-space ownership, CDP, screenshots, downloads, uploads, and locator behavior, but it cannot reproduce the closed-source macOS app's custom snapshot engine or automatic Chrome-profile migration.
 
+For a self-contained Electron package with embedded Chromium, run `npm install` and `npm run package:appimage` from `platform/electron`. The AppImage includes the Linux host, SDK, and skill resources; launch it normally for the desktop browser or pass `--cli` for the bundled `ego-browser` command path.
+
 ## After installing: confirm `ego-browser` is available
 
 Once the user has finished onboarding, confirm the command is ready:
