@@ -5,7 +5,10 @@ import { join, resolve } from "node:path";
 
 const testDir = import.meta.dirname;
 const repoDir = resolve(testDir, "../../..");
-const electronPath = resolve(testDir, "../node_modules/.bin/electron");
+const electronPath = resolve(
+  process.env.EGO_LITE_ELECTRON_EXECUTABLE ||
+    resolve(testDir, "../node_modules/.bin/electron"),
+);
 const profileDir = await mkdtemp(join(tmpdir(), "ego-electron-extension-"));
 const extensionDir = join(
   profileDir,
@@ -20,6 +23,8 @@ const environment = {
   EGO_LITE_PROFILE_DIR: profileDir,
   EGO_LITE_STATE_PATH: join(profileDir, "task-spaces.json"),
   EGO_LITE_DISABLE_GPU: "1",
+  EGO_LITE_SKIP_MIGRATION: "1",
+  EGO_LITE_DISABLE_AUTO_UPDATE: "1",
 };
 
 const child = spawn(electronPath, ["platform/electron"], {
@@ -82,14 +87,21 @@ class CdpConnection {
     return this;
   }
 
-  request(method, params = {}) {
+  request(method, params = {}, sessionId = undefined) {
     const id = this.nextId++;
     return new Promise((resolvePromise, rejectPromise) => {
       this.pending.set(id, {
         resolve: resolvePromise,
         reject: rejectPromise,
       });
-      this.socket.send(JSON.stringify({ id, method, params }));
+      this.socket.send(
+        JSON.stringify({
+          id,
+          method,
+          params,
+          ...(sessionId ? { sessionId } : {}),
+        }),
+      );
     });
   }
 
@@ -113,6 +125,22 @@ async function readEndpoint() {
 
 async function targetInfos(connection) {
   return (await connection.request("Target.getTargets")).targetInfos || [];
+}
+
+async function evaluate(connection, sessionId, expression) {
+  const result = await connection.request(
+    "Runtime.evaluate",
+    {
+      expression,
+      awaitPromise: true,
+      returnByValue: true,
+    },
+    sessionId,
+  );
+  if (result.exceptionDetails) {
+    throw new Error(result.exceptionDetails.text || "DOM evaluation failed");
+  }
+  return result.result?.value;
 }
 
 async function readBridge() {
@@ -180,6 +208,24 @@ try {
         );
       },
     );
+    const extensionId = extensionTarget.url.split("/")[2];
+    const toolbar = await waitFor("toolbar target", async () =>
+      (await targetInfos(connection)).find((target) =>
+        target.url.includes("/renderer/index.html"),
+      ),
+    );
+    const attachedToolbar = await connection.request("Target.attachToTarget", {
+      targetId: toolbar.targetId,
+      flatten: true,
+    });
+    const extensionMenu = await waitFor("extension toolbar menu", async () => {
+      const value = await evaluate(
+        connection,
+        attachedToolbar.sessionId,
+        "(() => ({visible: !document.querySelector('#extension-menu').hidden, labels: [...document.querySelectorAll('#extension-list .extension-row span')].map((node) => node.textContent), enabled: document.querySelector('#extension-list input')?.checked === true}))()",
+      );
+      return value?.visible ? value : null;
+    });
     const bridge = await waitFor("Electron bridge", readBridge);
     const created = await bridgeRequest(bridge, "/create-tab", {
       spaceId: 1,
@@ -197,6 +243,28 @@ try {
         return targets.length >= 2 ? targets : null;
       },
     );
+    const disabled = await evaluate(
+      connection,
+      attachedToolbar.sessionId,
+      `window.egoLite.setExtension(${JSON.stringify({ id: extensionId, enabled: false })}).then((state) => state.extensions.find((extension) => extension.id === ${JSON.stringify(extensionId)}))`,
+    );
+    await waitFor("extension disable", async () => {
+      const targets = await targetInfos(connection);
+      return targets.some((target) => target.url.includes(extensionId))
+        ? null
+        : true;
+    });
+    const reenabled = await evaluate(
+      connection,
+      attachedToolbar.sessionId,
+      `window.egoLite.setExtension(${JSON.stringify({ id: extensionId, enabled: true })}).then((state) => state.extensions.find((extension) => extension.id === ${JSON.stringify(extensionId)}))`,
+    );
+    await waitFor("extension re-enable", async () => {
+      const targets = await targetInfos(connection);
+      return targets.some((target) => target.url.includes(extensionId))
+        ? true
+        : null;
+    });
     await bridgeRequest(bridge, "/close-tab", { targetId: created.targetId });
     console.log(
       JSON.stringify({
@@ -204,6 +272,9 @@ try {
         targetType: extensionTarget.type,
         targetUrl: extensionTarget.url,
         sessionExtensionTargets: extensionTargets.length,
+        extensionMenu,
+        disabled,
+        reenabled,
       }),
     );
   } finally {

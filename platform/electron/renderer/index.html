@@ -231,6 +231,64 @@
         width: 100%;
       }
 
+      #extension-menu {
+        position: relative;
+      }
+
+      #extension-menu summary {
+        background: #1f2937;
+        border: 1px solid #4b5563;
+        border-radius: 6px;
+        color: #e5e7eb;
+        cursor: pointer;
+        font-size: 13px;
+        height: 34px;
+        list-style: none;
+        padding: 8px 10px;
+        white-space: nowrap;
+      }
+
+      #extension-menu summary::-webkit-details-marker {
+        display: none;
+      }
+
+      #extension-list {
+        background: #1f2937;
+        border: 1px solid #4b5563;
+        border-radius: 6px;
+        display: grid;
+        gap: 6px;
+        min-width: 280px;
+        max-height: min(520px, calc(100vh - 72px));
+        overflow: auto;
+        padding: 6px;
+        position: absolute;
+        right: 0;
+        top: 40px;
+        z-index: 10;
+      }
+
+      .extension-row {
+        align-items: center;
+        display: flex;
+        gap: 8px;
+      }
+
+      .extension-row > span {
+        flex: 1;
+        font-size: 12px;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .extension-row input {
+        flex: 0 0 auto;
+        height: 16px;
+        width: 16px;
+      }
+
       #download-menu {
         position: relative;
       }
@@ -379,6 +437,10 @@
         <summary>Bookmarks</summary>
         <div id="bookmark-list" role="menu"></div>
       </details>
+      <details id="extension-menu" hidden>
+        <summary>Extensions</summary>
+        <div id="extension-list" role="menu"></div>
+      </details>
       <details id="download-menu" hidden>
         <summary>Downloads</summary>
         <div id="download-list" role="menu"></div>
@@ -407,6 +469,8 @@
       const importData = document.querySelector("#import-data");
       const bookmarkMenu = document.querySelector("#bookmark-menu");
       const bookmarkList = document.querySelector("#bookmark-list");
+      const extensionMenu = document.querySelector("#extension-menu");
+      const extensionList = document.querySelector("#extension-list");
       const downloadMenu = document.querySelector("#download-menu");
       const downloadList = document.querySelector("#download-list");
       const tabPicker = document.querySelector("#tab-picker");
@@ -452,6 +516,41 @@
             }
           });
           bookmarkList.append(button);
+        }
+      }
+
+      function applyExtensions(extensions = []) {
+        extensionList.replaceChildren();
+        extensionMenu.hidden = extensions.length === 0;
+        for (const extension of extensions) {
+          const row = document.createElement("label");
+          row.className = "extension-row";
+          row.dataset.extensionId = extension.id;
+          const label = document.createElement("span");
+          label.textContent = `${extension.name} · ${extension.version}${extension.error ? " · unavailable" : ""}`;
+          label.title = extension.error || extension.name;
+          const toggle = document.createElement("input");
+          toggle.type = "checkbox";
+          toggle.checked = Boolean(extension.enabled);
+          toggle.disabled = Boolean(extension.error);
+          toggle.setAttribute("aria-label", `${extension.name} enabled`);
+          toggle.addEventListener("change", async () => {
+            toggle.disabled = true;
+            try {
+              applyState(
+                await window.egoLite.setExtension({
+                  id: extension.id,
+                  enabled: toggle.checked,
+                }),
+              );
+            } catch (error) {
+              toggle.checked = !toggle.checked;
+              toggle.disabled = false;
+              status.textContent = error.message;
+            }
+          });
+          row.append(label, toggle);
+          extensionList.append(row);
         }
       }
 
@@ -621,6 +720,7 @@
         back.disabled = !state.canGoBack;
         forward.disabled = !state.canGoForward;
         applyBookmarks(state.bookmarks);
+        applyExtensions(state.extensions);
         applyDownloads(state.downloads);
         applySpaces(state.taskSpaces);
         applyUpdateState(state.updateState);

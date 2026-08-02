@@ -49,6 +49,10 @@ const WINDOW_STATE_PATH = resolve(
   process.env.EGO_LITE_WINDOW_STATE_PATH ||
     join(PROFILE_DIR, "ego-lite-window.json"),
 );
+const EXTENSION_STATE_PATH = resolve(
+  process.env.EGO_LITE_EXTENSION_STATE_PATH ||
+    join(PROFILE_DIR, "ego-lite-extensions.json"),
+);
 const TOOLBAR_HEIGHT = 52;
 const WINDOW_MIN_WIDTH = 720;
 const WINDOW_MIN_HEIGHT = 480;
@@ -82,6 +86,8 @@ let browserView;
 const managedViews = new Map();
 const sessionPermissionStates = new WeakMap();
 const sessionExtensionLoads = new WeakMap();
+const sessionExtensionStates = new WeakMap();
+const extensionCatalog = new Map();
 let bridgeServer;
 let bridgeToken;
 let browserStateSyncTimer;
@@ -396,6 +402,7 @@ function currentBrowserState() {
     controlState: currentControlState(),
     bookmarks,
     downloads: currentDownloads(),
+    extensions: currentExtensions(),
     taskSpaces: currentTaskSpaces(),
     updateState: { ...updateState },
     canGoBack: browserView?.webContents.navigationHistory.canGoBack() || false,
@@ -776,10 +783,60 @@ async function inheritPrimaryCookies(targetSession) {
   }
 }
 
+function readDisabledExtensionIds() {
+  try {
+    const state = JSON.parse(readFileSync(EXTENSION_STATE_PATH, "utf8"));
+    return state?.version === 1 && Array.isArray(state.disabled)
+      ? new Set(
+          state.disabled
+            .filter((id) => typeof id === "string")
+            .map((id) => id.trim())
+            .filter(Boolean),
+        )
+      : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function writeDisabledExtensionIds(disabled) {
+  const temporaryPath = `${EXTENSION_STATE_PATH}.${process.pid}.tmp`;
+  mkdirSync(dirname(EXTENSION_STATE_PATH), { recursive: true });
+  writeFileSync(
+    temporaryPath,
+    `${JSON.stringify({ version: 1, disabled: [...disabled].sort() }, null, 2)}\n`,
+  );
+  renameSync(temporaryPath, EXTENSION_STATE_PATH);
+}
+
+function extensionStateForId(states, id) {
+  if (!states) return null;
+  return (
+    states.get(id) ||
+    [...states.values()].find((extension) => extension.id === id) ||
+    null
+  );
+}
+
+function currentExtensions() {
+  const states = sessionExtensionStates.get(session.defaultSession);
+  return [...(states?.values() || [])].map(
+    ({ id, name, version, enabled, error }) => ({
+      id,
+      name,
+      version,
+      enabled: Boolean(enabled),
+      ...(error ? { error } : {}),
+    }),
+  );
+}
+
 async function loadMigratedExtensions(webSession) {
   const existing = sessionExtensionLoads.get(webSession);
   if (existing) return existing;
 
+  const states = new Map();
+  sessionExtensionStates.set(webSession, states);
   const loadPromise = (async () => {
     const extensionRoot = join(PROFILE_DIR, "Default", "Extensions");
     let extensionEntries;
@@ -793,6 +850,7 @@ async function loadMigratedExtensions(webSession) {
       return [];
     }
 
+    const disabled = readDisabledExtensionIds();
     const loaded = [];
     for (const extensionEntry of extensionEntries) {
       if (!extensionEntry.isDirectory()) continue;
@@ -809,6 +867,7 @@ async function loadMigratedExtensions(webSession) {
         .sort((left, right) =>
           right.localeCompare(left, undefined, { numeric: true }),
         );
+      let extensionState;
       for (const version of versions) {
         const extensionPath = join(extensionDir, version);
         let manifest;
@@ -823,24 +882,48 @@ async function loadMigratedExtensions(webSession) {
           continue;
         }
         if (!Number.isInteger(manifest?.manifest_version)) continue;
-        let loadedVersion = false;
+        const candidate = {
+          id: extensionEntry.name,
+          name: manifest.name || extensionEntry.name,
+          version: manifest.version || version,
+          path: extensionPath,
+        };
+        extensionCatalog.set(candidate.id, candidate);
+        if (disabled.has(candidate.id)) {
+          extensionState = { ...candidate, enabled: false, error: null };
+          break;
+        }
         try {
           const details = await webSession.loadExtension(extensionPath, {
             allowFileAccess: true,
           });
+          extensionState = {
+            ...candidate,
+            id: details.id || candidate.id,
+            name: details.name || candidate.name,
+            version: details.version || candidate.version,
+            enabled: true,
+            error: null,
+          };
+          extensionCatalog.set(extensionState.id, extensionState);
           loaded.push({
-            id: details.id || extensionEntry.name,
-            name: details.name || manifest.name || extensionEntry.name,
-            version: details.version || manifest.version || version,
+            id: extensionState.id,
+            name: extensionState.name,
+            version: extensionState.version,
           });
-          loadedVersion = true;
         } catch (error) {
+          extensionState = {
+            ...candidate,
+            enabled: false,
+            error: String(error?.message || error).slice(0, 240),
+          };
           console.warn(
             `[ego-lite] could not load migrated extension ${extensionEntry.name}/${version}: ${error?.message || String(error)}`,
           );
         }
-        if (loadedVersion) break;
+        if (extensionState?.enabled) break;
       }
+      if (extensionState) states.set(extensionState.id, extensionState);
     }
     if (loaded.length > 0) {
       console.log(`[ego-lite] loaded ${loaded.length} migrated extension(s)`);
@@ -849,6 +932,71 @@ async function loadMigratedExtensions(webSession) {
   })();
   sessionExtensionLoads.set(webSession, loadPromise);
   return loadPromise;
+}
+
+async function setExtensionEnabled({ id, enabled }) {
+  const extensionId = String(id || "").trim();
+  if (!extensionId) throw new Error("extension id is required");
+  const requestedState = Boolean(enabled);
+  const candidate =
+    extensionCatalog.get(extensionId) ||
+    extensionStateForId(
+      sessionExtensionStates.get(session.defaultSession),
+      extensionId,
+    );
+  if (!candidate) throw new Error(`extension not found: ${extensionId}`);
+
+  const disabled = readDisabledExtensionIds();
+  if (requestedState) disabled.delete(candidate.id);
+  else disabled.add(candidate.id);
+  writeDisabledExtensionIds(disabled);
+
+  const sessions = new Set([session.defaultSession]);
+  for (const managed of managedViews.values()) {
+    if (!managed.private) sessions.add(managed.view.webContents.session);
+  }
+  try {
+    for (const webSession of sessions) {
+      const states = sessionExtensionStates.get(webSession);
+      if (!states) continue;
+      const current = extensionStateForId(states, candidate.id);
+      if (requestedState) {
+        if (current?.enabled) continue;
+        const details = await webSession.loadExtension(
+          current?.path || candidate.path,
+          { allowFileAccess: true },
+        );
+        const next = {
+          ...candidate,
+          ...current,
+          id: details.id || candidate.id,
+          name: details.name || current?.name || candidate.name,
+          version: details.version || current?.version || candidate.version,
+          enabled: true,
+          error: null,
+        };
+        if (current) states.delete(current.id);
+        states.set(next.id, next);
+        extensionCatalog.set(next.id, next);
+      } else {
+        if (current?.enabled) webSession.removeExtension(current.id);
+        if (current) states.delete(current.id);
+        states.set(candidate.id, {
+          ...candidate,
+          ...current,
+          id: candidate.id,
+          enabled: false,
+          error: null,
+        });
+      }
+    }
+  } catch (error) {
+    disabled.add(candidate.id);
+    writeDisabledExtensionIds(disabled);
+    throw error;
+  }
+  publishBrowserState();
+  return currentBrowserState();
 }
 
 function applyPermissionCommand({ targetId, method, params = {} }) {
@@ -1747,6 +1895,9 @@ ipcMain.handle("ego-lite:show-download", (_event, id) => {
   shell.showItemInFolder(download.path);
   return { shown: true };
 });
+ipcMain.handle("ego-lite:set-extension", (_event, value) =>
+  setExtensionEnabled(value || {}),
+);
 ipcMain.handle("ego-lite:set-tab-group", (_event, value) =>
   updateTabGroup(value || {}),
 );

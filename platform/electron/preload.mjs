@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld("egoLite", {
   forward: () => ipcRenderer.invoke("ego-lite:forward"),
   reload: () => ipcRenderer.invoke("ego-lite:reload"),
   showDownload: (id) => ipcRenderer.invoke("ego-lite:show-download", id),
+  setExtension: (value) => ipcRenderer.invoke("ego-lite:set-extension", value),
   importData: () => ipcRenderer.invoke("ego-lite:import-data"),
   setTabGroup: (value) => ipcRenderer.invoke("ego-lite:set-tab-group", value),
   newTab: () => ipcRenderer.invoke("ego-lite:new-tab"),
