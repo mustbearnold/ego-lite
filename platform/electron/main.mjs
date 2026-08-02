@@ -18,14 +18,18 @@ const PROFILE_DIR = resolve(
 );
 const TOOLBAR_HEIGHT = 52;
 const CLI_MODE = process.argv.includes("--cli");
+const CLI_PROFILE_MIGRATION =
+  CLI_MODE && process.argv.includes("--migrate-profile");
 
 mkdirSync(PROFILE_DIR, { recursive: true });
 app.setPath("userData", PROFILE_DIR);
 app.setName("ego lite");
 app.setAppUserModelId("com.citrolabs.ego-lite");
-app.commandLine.appendSwitch("remote-debugging-port", "0");
-app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
-app.commandLine.appendSwitch("remote-allow-origins", "*");
+if (!CLI_PROFILE_MIGRATION) {
+  app.commandLine.appendSwitch("remote-debugging-port", "0");
+  app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
+  app.commandLine.appendSwitch("remote-allow-origins", "*");
+}
 app.commandLine.appendSwitch("password-store", "basic");
 app.commandLine.appendSwitch("enable-automation");
 app.commandLine.appendSwitch("force-renderer-accessibility");
@@ -489,7 +493,8 @@ ipcMain.handle("ego-lite:activate-tab", (_event, targetId) => {
 });
 ipcMain.handle("ego-lite:browser-state", () => currentBrowserState());
 
-const hasSingleInstance = app.requestSingleInstanceLock();
+const hasSingleInstance =
+  CLI_PROFILE_MIGRATION || app.requestSingleInstanceLock();
 if (!hasSingleInstance) {
   app.quit();
 } else {
@@ -501,16 +506,21 @@ if (!hasSingleInstance) {
   });
 
   app.whenReady().then(async () => {
-    createWindow();
-    await startBridge();
     if (CLI_MODE) {
+      if (!CLI_PROFILE_MIGRATION) {
+        createWindow();
+        await startBridge();
+      }
       try {
         await runPackagedCli();
       } catch (error) {
         console.error(error?.stack || error?.message || String(error));
         app.exit(1);
       }
+      return;
     }
+    createWindow();
+    await startBridge();
   });
 
   app.on("window-all-closed", () => {

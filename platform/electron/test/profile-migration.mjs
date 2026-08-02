@@ -5,7 +5,12 @@ import { join } from "node:path";
 
 const repoDir = new URL("../../..", import.meta.url).pathname;
 const hostPath = join(repoDir, "platform/linux/ego-browser.mjs");
+const electronPath = join(
+  repoDir,
+  "platform/electron/node_modules/.bin/electron",
+);
 const executable = process.env.EGO_BROWSER_EXECUTABLE || "chromium";
+const useElectronMigration = process.env.EGO_LITE_ELECTRON_MIGRATION === "1";
 const root = await mkdtemp(join(tmpdir(), "ego-profile-migration-"));
 const sourceUserData = join(root, "source-browser");
 const sourceProfile = join(sourceUserData, "Default");
@@ -144,20 +149,26 @@ async function stopBrowser(browser) {
 }
 
 async function runMigration() {
-  const child = spawn(
-    process.execPath,
-    [hostPath, "--migrate-profile", "--from", sourceUserData],
-    {
-      cwd: repoDir,
-      env: {
-        ...process.env,
-        EGO_LITE_PROFILE_DIR: targetUserData,
-        EGO_LITE_STATE_PATH: statePath,
-        EGO_BROWSER_EXECUTABLE: executable,
-      },
-      stdio: ["ignore", "pipe", "pipe"],
+  const command = useElectronMigration ? electronPath : process.execPath;
+  const args = useElectronMigration
+    ? [
+        "platform/electron",
+        "--cli",
+        "--migrate-profile",
+        "--from",
+        sourceUserData,
+      ]
+    : [hostPath, "--migrate-profile", "--from", sourceUserData];
+  const child = spawn(command, args, {
+    cwd: repoDir,
+    env: {
+      ...process.env,
+      EGO_LITE_PROFILE_DIR: targetUserData,
+      EGO_LITE_STATE_PATH: statePath,
+      EGO_BROWSER_EXECUTABLE: executable,
     },
-  );
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   let stdout = "";
   let stderr = "";
   child.stdout.on("data", (chunk) => {

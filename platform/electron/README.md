@@ -56,6 +56,12 @@ The profile-migration probe verifies explicit Chrome-data migration, backup crea
 npm run test:profile-migration
 ```
 
+The Electron-specific variant verifies the packaged CLI path without opening a browser window:
+
+```bash
+npm run test:profile-migration:electron
+```
+
 The snapshot-contract probe covers action marks, stable role locators, result limits, and viewport filtering:
 
 ```bash
