@@ -486,14 +486,16 @@ class LinuxEgoHost {
   }
 
   async ensureSpaceTab(space) {
-    const targetIds = this.spaceTargetIds(space);
+    let targetIds = this.spaceTargetIds(space);
+    let bridgeTabs = [];
+    if (this.electronBridge) {
+      bridgeTabs = await this.refreshElectronSpaceTargets(space);
+      targetIds = bridgeTabs.map((tab) => tab.targetId);
+    }
     const targets = await this.allTargets();
     let activeTargetId = null;
-    if (this.electronBridge && targetIds.length > 0) {
-      const bridgeTabs = await this.electronBridge.request("/tabs");
-      activeTargetId = bridgeTabs.tabs?.find(
-        (tab) => targetIds.includes(tab.targetId) && tab.active,
-      )?.targetId;
+    if (bridgeTabs.length > 0) {
+      activeTargetId = bridgeTabs.find((tab) => tab.active)?.targetId;
     }
     const existing =
       targets.find(
@@ -545,18 +547,23 @@ class LinuxEgoHost {
 
   async listTaskSpaces() {
     const targets = await this.allTargets();
+    const bridgeTabs = this.electronBridge
+      ? (await this.electronBridge.request("/tabs")).tabs || []
+      : null;
     return {
       taskSpaces: this.state.spaces.map((space) => ({
         ...space,
-        recentTabTitles: targets
-          .filter(
-            (target) =>
-              target.type === "page" &&
-              !isElectronShellTarget(target) &&
-              (this.isTabScopedSpace(space)
-                ? this.spaceTargetIds(space).includes(target.targetId)
-                : target.browserContextId === space.contextId),
-          )
+        recentTabTitles: (bridgeTabs
+          ? bridgeTabs.filter((tab) => tab.spaceId === space.id)
+          : targets.filter(
+              (target) =>
+                target.type === "page" &&
+                !isElectronShellTarget(target) &&
+                (this.isTabScopedSpace(space)
+                  ? this.spaceTargetIds(space).includes(target.targetId)
+                  : target.browserContextId === space.contextId),
+            )
+        )
           .map((target) => target.title || "")
           .filter(Boolean),
       })),
@@ -651,7 +658,13 @@ class LinuxEgoHost {
   async closeTaskSpace() {
     const space = this.requireSelectedSpace();
     if (this.isTabScopedSpace(space)) {
-      for (const targetId of this.spaceTargetIds(space)) {
+      const bridgeTabs = this.electronBridge
+        ? await this.refreshElectronSpaceTargets(space)
+        : null;
+      const targetIds = bridgeTabs
+        ? bridgeTabs.map((tab) => tab.targetId)
+        : this.spaceTargetIds(space);
+      for (const targetId of targetIds) {
         await this.closeTarget(targetId).catch(() => {});
       }
     } else if (space.contextId && this.contextIds.has(space.contextId)) {
@@ -673,10 +686,14 @@ class LinuxEgoHost {
     const space = this.currentSpace();
     const contextId = await this.selectedContextId();
     const effectiveContextId = contextId || this.defaultContextId;
-    const scopedTargetIds =
+    let scopedTargetIds =
       space && this.isTabScopedSpace(space)
         ? new Set(this.spaceTargetIds(space))
         : null;
+    if (scopedTargetIds && this.electronBridge) {
+      const bridgeTabs = await this.refreshElectronSpaceTargets(space);
+      scopedTargetIds = new Set(bridgeTabs.map((tab) => tab.targetId));
+    }
     const targets = await this.allTargets();
     let tabs = targets.filter((target) => {
       if (target.type !== "page") return false;
@@ -1014,6 +1031,24 @@ class LinuxEgoHost {
       return;
     }
     await this.connection.request("Target.closeTarget", { targetId });
+  }
+
+  async refreshElectronSpaceTargets(space) {
+    if (!this.electronBridge) return [];
+    const tabs =
+      (await this.electronBridge.request("/tabs")).tabs?.filter(
+        (tab) => tab.spaceId === space.id,
+      ) || [];
+    const targetIds = tabs.map((tab) => tab.targetId);
+    const previous = this.spaceTargetIds(space);
+    if (
+      previous.length !== targetIds.length ||
+      previous.some((targetId, index) => targetId !== targetIds[index])
+    ) {
+      space.tabTargetIds = targetIds;
+      await this.saveState();
+    }
+    return tabs;
   }
 
   isTabScopedSpace(space) {

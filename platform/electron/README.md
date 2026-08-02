@@ -84,6 +84,12 @@ The Electron shell also persists its primary tabs and active tab across a restar
 npm run test:session-restore
 ```
 
+Task-Space tabs are also persisted as background views and rebound to the current Electron targets when the app restarts. The detached probe verifies restored Space URLs, SDK reuse, and the toolbar DOM without revealing a Space:
+
+```bash
+npm run test:space-restore
+```
+
 The detached Import data probe clicks the toolbar control through renderer CDP, verifies restart-safe profile migration and backup preservation, and checks the control after relaunch:
 
 ```bash

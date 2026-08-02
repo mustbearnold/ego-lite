@@ -72,7 +72,10 @@ const PRIMARY_SESSION_FILE = "ego-lite-session.json";
 const PRIMARY_SESSION_PATH = join(PROFILE_DIR, PRIMARY_SESSION_FILE);
 const PENDING_IMPORT_FILE = "ego-lite-pending-import.json";
 const PENDING_IMPORT_PATH = join(PROFILE_DIR, PENDING_IMPORT_FILE);
+const SPACE_SESSION_FILE = "ego-lite-space-session.json";
+const SPACE_SESSION_PATH = join(PROFILE_DIR, SPACE_SESSION_FILE);
 let sessionSaveTimer;
+let spaceSaveTimer;
 let importRequestPending = false;
 
 const permissionAliases = {
@@ -202,6 +205,68 @@ function savePrimarySessionSync() {
   }
 }
 
+function spaceSessionManifest() {
+  const spaces = new Map();
+  for (const [, managed] of managedViews) {
+    if (managed.spaceId === null || managed.view.webContents.isDestroyed()) {
+      continue;
+    }
+    const url = sessionTabUrl(managed.view.webContents.getURL());
+    if (!url) continue;
+    let space = spaces.get(managed.spaceId);
+    if (!space) {
+      space = {
+        id: managed.spaceId,
+        name: managed.spaceName || null,
+        tabs: [],
+      };
+      spaces.set(managed.spaceId, space);
+    }
+    space.tabs.push({
+      url,
+      active: managed.view === browserView,
+    });
+  }
+  return { version: 1, spaces: [...spaces.values()] };
+}
+
+async function saveSpaceSession() {
+  const temporaryPath = `${SPACE_SESSION_PATH}.${process.pid}.tmp`;
+  await writeFile(
+    temporaryPath,
+    `${JSON.stringify(spaceSessionManifest(), null, 2)}\n`,
+  );
+  await rename(temporaryPath, SPACE_SESSION_PATH);
+}
+
+function saveSpaceSessionSync() {
+  const temporaryPath = `${SPACE_SESSION_PATH}.${process.pid}.sync.tmp`;
+  try {
+    writeFileSync(
+      temporaryPath,
+      `${JSON.stringify(spaceSessionManifest(), null, 2)}\n`,
+    );
+    renameSync(temporaryPath, SPACE_SESSION_PATH);
+  } catch (error) {
+    console.warn(
+      `[ego-lite] could not flush task-space tabs: ${error?.message || String(error)}`,
+    );
+  }
+}
+
+function scheduleSpaceSessionSave() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (spaceSaveTimer) clearTimeout(spaceSaveTimer);
+  spaceSaveTimer = setTimeout(() => {
+    spaceSaveTimer = undefined;
+    void saveSpaceSession().catch((error) => {
+      console.warn(
+        `[ego-lite] could not persist task-space tabs: ${error?.message || String(error)}`,
+      );
+    });
+  }, 100);
+}
+
 function schedulePrimarySessionSave() {
   if (!mainWindow || mainWindow.isDestroyed() || !browserView) return;
   if (sessionSaveTimer) clearTimeout(sessionSaveTimer);
@@ -219,6 +284,7 @@ function publishBrowserState() {
   if (!mainWindow || mainWindow.isDestroyed() || !browserView) return;
   mainWindow.webContents.send("ego-lite:browser-state", currentBrowserState());
   schedulePrimarySessionSave();
+  scheduleSpaceSessionSave();
 }
 
 function resizeBrowserView() {
@@ -759,6 +825,37 @@ async function readPrimarySessionManifest() {
   return readStoredTabsManifest(PRIMARY_SESSION_PATH);
 }
 
+async function readSpaceSessionManifest() {
+  let manifest;
+  try {
+    manifest = JSON.parse(await readFile(SPACE_SESSION_PATH, "utf8"));
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      console.warn(
+        `[ego-lite] could not read task-space session: ${error?.message || String(error)}`,
+      );
+    }
+    return null;
+  }
+  if (manifest?.version !== 1 || !Array.isArray(manifest.spaces)) {
+    console.warn("[ego-lite] ignoring an unsupported task-space session");
+    return null;
+  }
+  const spaces = manifest.spaces
+    .filter((space) => Number.isFinite(space?.id))
+    .map((space) => ({
+      id: Number(space.id),
+      name: space.name ? String(space.name).slice(0, 120) : null,
+      tabs: (Array.isArray(space.tabs) ? space.tabs : [])
+        .map((tab) => ({
+          url: sessionTabUrl(tab?.url),
+          active: Boolean(tab?.active),
+        }))
+        .filter((tab) => tab.url),
+    }));
+  return { spaces };
+}
+
 async function writePendingProfileImport(sourcePath) {
   const temporaryPath = `${PENDING_IMPORT_PATH}.${process.pid}.tmp`;
   await writeFile(
@@ -828,6 +925,7 @@ async function createPrimaryBrowserView({
 async function createWindow() {
   const migrated = await readMigratedTabsManifest();
   const persisted = migrated ? null : await readPrimarySessionManifest();
+  const persistedSpaces = await readSpaceSessionManifest();
   const stored = migrated || persisted;
   const restoredTabs = stored?.tabs || [];
   mainWindow = new BrowserWindow({
@@ -882,12 +980,32 @@ async function createWindow() {
   if (activeIndex > 0) {
     setActiveBrowserView(restoredViews[activeIndex].view);
   }
+  for (const space of persistedSpaces?.spaces || []) {
+    for (const tab of space.tabs) {
+      try {
+        await createManagedView({
+          spaceId: space.id,
+          spaceName: space.name,
+          url: tab.url,
+        });
+      } catch (error) {
+        console.warn(
+          `[ego-lite] could not restore task-space tab ${space.id}: ${error?.message || String(error)}`,
+        );
+      }
+    }
+  }
   if (migrated?.manifestPath) {
     await unlink(migrated.manifestPath).catch(() => {});
   }
   await savePrimarySession().catch((error) => {
     console.warn(
       `[ego-lite] could not persist initial primary tabs: ${error?.message || String(error)}`,
+    );
+  });
+  await saveSpaceSession().catch((error) => {
+    console.warn(
+      `[ego-lite] could not persist initial task-space tabs: ${error?.message || String(error)}`,
     );
   });
   void mainWindow.loadFile(join(MAIN_DIR, "renderer", "index.html"));
@@ -1186,7 +1304,9 @@ if (!hasSingleInstance) {
 
   app.on("before-quit", () => {
     if (sessionSaveTimer) clearTimeout(sessionSaveTimer);
+    if (spaceSaveTimer) clearTimeout(spaceSaveTimer);
     savePrimarySessionSync();
+    saveSpaceSessionSync();
     bridgeServer?.close();
     void unlink(bridgeFile).catch(() => {});
   });

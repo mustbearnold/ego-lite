@@ -30,6 +30,7 @@
     "test:profile-migration": "node test/profile-migration.mjs",
     "test:profile-migration:electron": "xvfb-run --auto-servernum env EGO_LITE_ELECTRON_MIGRATION=1 node test/profile-migration.mjs",
     "test:snapshot-contract": "node test/snapshot-contract.mjs",
+    "test:space-restore": "npm run build:sdk && xvfb-run --auto-servernum node test/space-restore.mjs",
     "package:dir": "npm run build:sdk && electron-builder --linux dir",
     "package:appimage": "npm run build:sdk && electron-builder --linux AppImage",
     "package:linux": "npm run build:sdk && electron-builder --linux"
