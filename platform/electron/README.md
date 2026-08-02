@@ -56,6 +56,12 @@ The profile-migration probe verifies explicit Chrome-data migration, backup crea
 npm run test:profile-migration
 ```
 
+The snapshot-contract probe covers action marks, stable role locators, result limits, and viewport filtering:
+
+```bash
+npm run test:snapshot-contract
+```
+
 The packaged CLI exposes the same migration command as the standalone host, for example `ego-lite --cli --migrate-profile --from "$HOME/.config/google-chrome"`. Close the source browser first; passwords are intentionally not imported.
 
 Do not run the Electron package and the standalone Linux host against the same profile at the same time. Set `EGO_LITE_PROFILE_DIR` to use a separate profile.

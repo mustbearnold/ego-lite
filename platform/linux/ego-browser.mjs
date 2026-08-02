@@ -708,10 +708,15 @@ class LinuxEgoHost {
         `[ego-lite-linux] snapshot target=${targetId} session=${sessionId} nodes=${result.nodes?.length || 0}\n`,
       );
     }
-    const { content, refs } = renderAccessibilityTree(
-      result.nodes || [],
-      options,
-    );
+    const snapshotNodes =
+      options.scope === "only_within_viewport"
+        ? await nodesWithinViewport(
+            this.connection,
+            sessionId,
+            result.nodes || [],
+          )
+        : result.nodes || [];
+    const { content, refs } = renderAccessibilityTree(snapshotNodes, options);
     return { content, refs };
   }
 
@@ -985,6 +990,170 @@ function isBrowserContextUnavailable(error) {
   );
 }
 
+const ACTIONABLE_AX_ROLES = new Set([
+  "button",
+  "checkbox",
+  "combobox",
+  "link",
+  "listbox",
+  "menuitem",
+  "option",
+  "radio",
+  "searchbox",
+  "slider",
+  "spinbutton",
+  "switch",
+  "tab",
+  "textbox",
+  "treeitem",
+]);
+
+function axPropertyValue(node, propertyName) {
+  const property = (node.properties || []).find(
+    (candidate) => candidate.name === propertyName,
+  );
+  return axValue(property?.value);
+}
+
+function isActionableAxNode(node, role) {
+  return (
+    ACTIONABLE_AX_ROLES.has(role) ||
+    axValue(node.focusable) === true ||
+    axPropertyValue(node, "focusable") === true
+  );
+}
+
+function stableLocatorForNode(role, name) {
+  if (!role || role === "none" || role === "generic" || role === "text") {
+    return null;
+  }
+  return `loc=role:${role}${name ? `[name=${JSON.stringify(name)}]` : ""}`;
+}
+
+function quadBounds(quad) {
+  if (!Array.isArray(quad) || quad.length < 8) return null;
+  const x = [];
+  const y = [];
+  for (let index = 0; index < quad.length; index += 2) {
+    x.push(Number(quad[index]));
+    y.push(Number(quad[index + 1]));
+  }
+  if (x.some((value) => !Number.isFinite(value))) return null;
+  return {
+    left: Math.min(...x),
+    right: Math.max(...x),
+    top: Math.min(...y),
+    bottom: Math.max(...y),
+  };
+}
+
+function boundsIntersectViewport(bounds, viewport) {
+  return (
+    bounds.right >= viewport.left &&
+    bounds.left <= viewport.right &&
+    bounds.bottom >= viewport.top &&
+    bounds.top <= viewport.bottom
+  );
+}
+
+async function nodesWithinViewport(connection, sessionId, nodes) {
+  if (nodes.length === 0) return nodes;
+  let metrics;
+  try {
+    metrics = await connection.request("Page.getLayoutMetrics", {}, sessionId);
+    await connection.request("DOM.enable", {}, sessionId).catch(() => {});
+  } catch {
+    return nodes;
+  }
+  const sourceViewport =
+    metrics.cssVisualViewport ||
+    metrics.cssLayoutViewport ||
+    metrics.visualViewport ||
+    metrics.layoutViewport;
+  const width = Number(
+    sourceViewport?.clientWidth ??
+      sourceViewport?.width ??
+      metrics.cssLayoutViewport?.clientWidth ??
+      metrics.layoutViewport?.clientWidth,
+  );
+  const height = Number(
+    sourceViewport?.clientHeight ??
+      sourceViewport?.height ??
+      metrics.cssLayoutViewport?.clientHeight ??
+      metrics.layoutViewport?.clientHeight,
+  );
+  if (!(width > 0 && height > 0)) return nodes;
+  const pageX =
+    Number(
+      sourceViewport?.pageX ??
+        metrics.cssVisualViewport?.pageX ??
+        metrics.layoutViewport?.pageX,
+    ) || 0;
+  const pageY =
+    Number(
+      sourceViewport?.pageY ??
+        metrics.cssVisualViewport?.pageY ??
+        metrics.layoutViewport?.pageY,
+    ) || 0;
+  const viewport = {
+    left: pageX,
+    top: pageY,
+    right: pageX + width,
+    bottom: pageY + height,
+  };
+
+  const visibleNodeIds = new Set();
+  let measuredNodeCount = 0;
+  const measurableNodes = nodes.filter(
+    (node) => node.backendDOMNodeId !== undefined,
+  );
+  for (let index = 0; index < measurableNodes.length; index += 32) {
+    const batch = measurableNodes.slice(index, index + 32);
+    const measurements = await Promise.all(
+      batch.map(async (node) => {
+        try {
+          const result = await connection.request(
+            "DOM.getBoxModel",
+            { backendNodeId: node.backendDOMNodeId },
+            sessionId,
+          );
+          const model = result.model;
+          const bounds =
+            quadBounds(model?.border) ||
+            quadBounds(model?.content) ||
+            quadBounds(model?.padding);
+          return bounds ? { nodeId: node.nodeId, bounds } : null;
+        } catch {
+          return null;
+        }
+      }),
+    );
+    for (const measurement of measurements) {
+      if (!measurement) continue;
+      measuredNodeCount += 1;
+      if (boundsIntersectViewport(measurement.bounds, viewport)) {
+        visibleNodeIds.add(measurement.nodeId);
+      }
+    }
+  }
+  if (measuredNodeCount === 0 || visibleNodeIds.size === 0) return nodes;
+
+  const parentById = new Map();
+  for (const node of nodes) {
+    for (const childId of node.childIds || []) {
+      parentById.set(childId, node.nodeId);
+    }
+  }
+  for (const nodeId of [...visibleNodeIds]) {
+    let parentId = parentById.get(nodeId);
+    while (parentId) {
+      visibleNodeIds.add(parentId);
+      parentId = parentById.get(parentId);
+    }
+  }
+  return nodes.filter((node) => visibleNodeIds.has(node.nodeId));
+}
+
 function renderAccessibilityTree(nodes, options) {
   const nodeById = new Map(nodes.map((node) => [node.nodeId, node]));
   const childIds = new Set(nodes.flatMap((node) => node.childIds || []));
@@ -1009,8 +1178,15 @@ function renderAccessibilityTree(nodes, options) {
     if (hasUsefulContent) {
       let line = `${"  ".repeat(depth)}- ${role || "text"}`;
       if (name) line += ` ${JSON.stringify(name)}`;
-      if (backendNodeId !== undefined && backendNodeId !== null) {
-        line += ` [ref=${backendNodeId}]`;
+      const actionable = isActionableAxNode(node, role);
+      const annotations = [];
+      if (
+        options.includeActionMarks !== false &&
+        actionable &&
+        backendNodeId !== undefined &&
+        backendNodeId !== null
+      ) {
+        annotations.push(`ref=${backendNodeId}`);
         if (!seenRefs.has(backendNodeId)) {
           seenRefs.add(backendNodeId);
           refs.push({
@@ -1019,6 +1195,13 @@ function renderAccessibilityTree(nodes, options) {
             name,
           });
         }
+      }
+      if (options.includeStableLocator !== false && actionable) {
+        const stableLocator = stableLocatorForNode(role, name);
+        if (stableLocator) annotations.push(stableLocator);
+      }
+      if (annotations.length > 0) {
+        line += ` [${annotations.join(", ")}]`;
       }
       lines.push(line);
     }
@@ -1720,6 +1903,8 @@ function isDirectExecution() {
     return false;
   }
 }
+
+export { nodesWithinViewport, renderAccessibilityTree };
 
 if (isDirectExecution()) {
   try {
