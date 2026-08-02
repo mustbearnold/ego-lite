@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld("egoLite", {
   back: () => ipcRenderer.invoke("ego-lite:back"),
   forward: () => ipcRenderer.invoke("ego-lite:forward"),
   reload: () => ipcRenderer.invoke("ego-lite:reload"),
+  toggleTabMute: () => ipcRenderer.invoke("ego-lite:toggle-tab-mute"),
   switchProfile: (value) => ipcRenderer.invoke("ego-lite:switch-profile", value),
   createProfile: (value) => ipcRenderer.invoke("ego-lite:create-profile", value),
   showDownload: (id) => ipcRenderer.invoke("ego-lite:show-download", id),

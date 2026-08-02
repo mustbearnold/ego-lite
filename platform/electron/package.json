@@ -39,6 +39,7 @@
     "test:snapshot-contract": "node test/snapshot-contract.mjs",
     "test:space-restore": "npm run build:sdk && xvfb-run --auto-servernum node test/space-restore.mjs",
     "test:tab-controls": "xvfb-run --auto-servernum node test/tab-controls.mjs",
+    "test:tab-audio": "xvfb-run --auto-servernum node test/tab-audio.mjs",
     "test:window-state": "xvfb-run --auto-servernum -s \"-screen 0 1600x1000x24\" node test/window-state.mjs",
     "test:update-controller": "node test/update-controller.mjs",
     "package:dir": "npm run build:sdk && electron-builder --linux dir",

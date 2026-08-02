@@ -451,6 +451,9 @@
       <button id="back" type="button" title="Back">‹</button>
       <button id="forward" type="button" title="Forward">›</button>
       <button id="reload" type="button" title="Reload">↻</button>
+      <button id="mute-tab" type="button" title="Mute tab" aria-label="Mute tab">
+        Mute
+      </button>
       <form id="address-form">
         <input
           id="address"
@@ -511,6 +514,7 @@
       const status = document.querySelector("#status");
       const back = document.querySelector("#back");
       const forward = document.querySelector("#forward");
+      const muteTab = document.querySelector("#mute-tab");
       const newTab = document.querySelector("#new-tab");
       const newPrivateTab = document.querySelector("#new-private-tab");
       const closeTab = document.querySelector("#close-tab");
@@ -726,6 +730,14 @@
 
       function applyTabs(tabs = []) {
         tabPicker.replaceChildren();
+        const activeTab = tabs.find((tab) => tab.active);
+        muteTab.disabled = !activeTab;
+        muteTab.textContent = activeTab?.muted ? "Unmute" : "Mute";
+        muteTab.title = activeTab?.muted ? "Unmute tab" : "Mute tab";
+        muteTab.setAttribute(
+          "aria-label",
+          activeTab?.muted ? "Unmute tab" : "Mute tab",
+        );
         const groups = new Map();
         for (const tab of tabs) {
           const option = document.createElement("option");
@@ -860,6 +872,15 @@
       document
         .querySelector("#reload")
         .addEventListener("click", () => window.egoLite.reload());
+      muteTab.addEventListener("click", async () => {
+        muteTab.disabled = true;
+        try {
+          applyState(await window.egoLite.toggleTabMute());
+        } catch (error) {
+          muteTab.disabled = false;
+          status.textContent = error.message;
+        }
+      });
       importData.addEventListener("click", async () => {
         importData.disabled = true;
         status.textContent = "choose browser profile…";

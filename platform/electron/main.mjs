@@ -432,6 +432,7 @@ function managedTabState() {
     spaceId: managed.spaceId,
     spaceName: managed.spaceName || null,
     private: Boolean(managed.private),
+    muted: managed.view.webContents.isAudioMuted(),
     url: managed.view.webContents.getURL() || "about:blank",
     title: managed.view.webContents.getTitle() || "",
     tabGroup: managed.tabGroup || null,
@@ -1252,6 +1253,7 @@ async function createManagedView({
       partition,
     },
   });
+  view.webContents.setAudioMuted(true);
   enableAccessibility(view);
   installDownloadHandlers(view.webContents.session);
   await loadMigratedExtensions(view.webContents.session);
@@ -1305,6 +1307,20 @@ async function createUserTab({ privateMode = false } = {}) {
   });
   setActiveBrowserView(primary.view);
   return managedTabState();
+}
+
+function setActiveTabMuted({ muted } = {}) {
+  const managed = [...managedViews.values()].find(
+    (candidate) => candidate.view === browserView,
+  );
+  if (!managed) throw new Error("active tab not found");
+  const nextMuted =
+    muted === undefined
+      ? !managed.view.webContents.isAudioMuted()
+      : Boolean(muted);
+  managed.view.webContents.setAudioMuted(nextMuted);
+  publishBrowserState();
+  return currentBrowserState();
 }
 
 async function closeActiveTab() {
@@ -1965,6 +1981,7 @@ async function maybeOfferPackagedMigration() {
     !promptEnabled ||
     CLI_MODE ||
     process.env.EGO_LITE_SKIP_MIGRATION === "1" ||
+    !PROFILE_MANAGER_ENABLED ||
     ACTIVE_PROFILE_ID !== "default"
   ) {
     return { stopped: false };
@@ -2094,6 +2111,7 @@ ipcMain.handle("ego-lite:forward", () => {
   }
 });
 ipcMain.handle("ego-lite:reload", () => browserView?.webContents.reload());
+ipcMain.handle("ego-lite:toggle-tab-mute", () => setActiveTabMuted());
 ipcMain.handle("ego-lite:import-data", () => requestProfileImport());
 ipcMain.handle("ego-lite:switch-profile", (_event, value) => {
   const id = String(value?.id || "").trim().toLowerCase();

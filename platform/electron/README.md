@@ -122,6 +122,12 @@ The detached tab-control probe verifies button actions, toolbar keyboard shortcu
 npm run test:tab-controls
 ```
 
+Agent task tabs start muted so background work cannot interrupt user audio. The toolbar exposes a per-tab Mute/Unmute control; the detached audio probe verifies the default and toggle behavior through the bridge and renderer DOM:
+
+```bash
+npm run test:tab-audio
+```
+
 The detached profile probe verifies an explicit profile registry and the Profile toolbar menu without opening a foreground window:
 
 ```bash
