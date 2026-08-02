@@ -1,6 +1,6 @@
 import { app, BrowserView, BrowserWindow, ipcMain, session } from "electron";
 import { mkdirSync } from "node:fs";
-import { unlink, writeFile } from "node:fs/promises";
+import { readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -44,6 +44,7 @@ let mainWindow;
 let browserView;
 const managedViews = new Map();
 const sessionPermissionStates = new WeakMap();
+const sessionExtensionLoads = new WeakMap();
 let bridgeServer;
 let bridgeToken;
 const bridgeFile = join(PROFILE_DIR, "ego-lite-bridge.json");
@@ -259,6 +260,81 @@ async function inheritPrimaryCookies(targetSession) {
   }
 }
 
+async function loadMigratedExtensions(webSession) {
+  const existing = sessionExtensionLoads.get(webSession);
+  if (existing) return existing;
+
+  const loadPromise = (async () => {
+    const extensionRoot = join(PROFILE_DIR, "Default", "Extensions");
+    let extensionEntries;
+    try {
+      extensionEntries = await readdir(extensionRoot, { withFileTypes: true });
+    } catch (error) {
+      if (error?.code === "ENOENT") return [];
+      console.warn(
+        `[ego-lite] could not inspect migrated extensions: ${error?.message || String(error)}`,
+      );
+      return [];
+    }
+
+    const loaded = [];
+    for (const extensionEntry of extensionEntries) {
+      if (!extensionEntry.isDirectory()) continue;
+      const extensionDir = join(extensionRoot, extensionEntry.name);
+      let versionEntries;
+      try {
+        versionEntries = await readdir(extensionDir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      const versions = versionEntries
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+        .sort((left, right) =>
+          right.localeCompare(left, undefined, { numeric: true }),
+        );
+      for (const version of versions) {
+        const extensionPath = join(extensionDir, version);
+        let manifest;
+        try {
+          manifest = JSON.parse(
+            await readFile(join(extensionPath, "manifest.json"), "utf8"),
+          );
+        } catch (error) {
+          console.warn(
+            `[ego-lite] could not read migrated extension ${extensionEntry.name}/${version}: ${error?.message || String(error)}`,
+          );
+          continue;
+        }
+        if (!Number.isInteger(manifest?.manifest_version)) continue;
+        let loadedVersion = false;
+        try {
+          const details = await webSession.loadExtension(extensionPath, {
+            allowFileAccess: true,
+          });
+          loaded.push({
+            id: details.id || extensionEntry.name,
+            name: details.name || manifest.name || extensionEntry.name,
+            version: details.version || manifest.version || version,
+          });
+          loadedVersion = true;
+        } catch (error) {
+          console.warn(
+            `[ego-lite] could not load migrated extension ${extensionEntry.name}/${version}: ${error?.message || String(error)}`,
+          );
+        }
+        if (loadedVersion) break;
+      }
+    }
+    if (loaded.length > 0) {
+      console.log(`[ego-lite] loaded ${loaded.length} migrated extension(s)`);
+    }
+    return loaded;
+  })();
+  sessionExtensionLoads.set(webSession, loadPromise);
+  return loadPromise;
+}
+
 function applyPermissionCommand({ targetId, method, params = {} }) {
   const managed = managedViews.get(targetId);
   if (!managed) throw new Error(`Electron target not found: ${targetId}`);
@@ -320,6 +396,7 @@ async function createManagedView({
     },
   });
   enableAccessibility(view);
+  await loadMigratedExtensions(view.webContents.session);
   await inheritPrimaryCookies(view.webContents.session);
   view.webContents.setWindowOpenHandler(({ url: openedUrl }) => {
     void navigateOnView(view, openedUrl).catch((error) => {
@@ -417,7 +494,7 @@ async function navigate(value) {
   return navigateOnView(browserView, value);
 }
 
-function createWindow() {
+async function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -453,7 +530,8 @@ function createWindow() {
     });
     return { action: "deny" };
   });
-  void browserView.webContents.loadURL("about:blank");
+  await loadMigratedExtensions(browserView.webContents.session);
+  await browserView.webContents.loadURL("about:blank");
   void registerManagedView(browserView, { tabId: "default" }).catch((error) => {
     console.error(
       `[ego-lite] cannot register default browser tab: ${error.message}`,
@@ -508,7 +586,7 @@ if (!hasSingleInstance) {
   app.whenReady().then(async () => {
     if (CLI_MODE) {
       if (!CLI_PROFILE_MIGRATION) {
-        createWindow();
+        await createWindow();
         await startBridge();
       }
       try {
@@ -519,7 +597,7 @@ if (!hasSingleInstance) {
       }
       return;
     }
-    createWindow();
+    await createWindow();
     await startBridge();
   });
 

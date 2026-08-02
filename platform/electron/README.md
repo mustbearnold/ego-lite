@@ -62,6 +62,12 @@ The Electron-specific variant verifies the packaged CLI path without opening a b
 npm run test:profile-migration:electron
 ```
 
+Migrated unpacked Chrome-family extensions are loaded into the primary session and each isolated task Space when the Electron app starts. A bad extension is skipped without preventing the browser from launching. The bounded probe confirms that a migrated Manifest V3 extension starts as an extension service worker:
+
+```bash
+npm run test:extension-loading
+```
+
 The snapshot-contract probe covers action marks, stable role locators, result limits, and viewport filtering:
 
 ```bash
