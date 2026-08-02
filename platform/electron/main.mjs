@@ -1840,14 +1840,44 @@ function hostResourcePath() {
 
 async function runHostCommand(args) {
   const hostPath = hostResourcePath();
-  const { runHost } = await import(pathToFileURL(hostPath).href);
-  return runHost(args);
+  const previousProfileDir = process.env.EGO_LITE_PROFILE_DIR;
+  const previousStatePath = process.env.EGO_LITE_STATE_PATH;
+  if (previousProfileDir === undefined) {
+    process.env.EGO_LITE_PROFILE_DIR = PROFILE_DIR;
+  }
+  if (previousStatePath === undefined) {
+    process.env.EGO_LITE_STATE_PATH = STATE_PATH;
+  }
+  try {
+    const { runHost } = await import(pathToFileURL(hostPath).href);
+    return await runHost(args);
+  } finally {
+    if (previousProfileDir === undefined) {
+      delete process.env.EGO_LITE_PROFILE_DIR;
+    } else {
+      process.env.EGO_LITE_PROFILE_DIR = previousProfileDir;
+    }
+    if (previousStatePath === undefined) {
+      delete process.env.EGO_LITE_STATE_PATH;
+    } else {
+      process.env.EGO_LITE_STATE_PATH = previousStatePath;
+    }
+  }
 }
 
 async function runPackagedCli() {
-  const exitCode = await runHostCommand(
-    process.argv.slice(2).filter((arg) => arg !== "--cli"),
-  );
+  const hostArguments = [];
+  for (let index = 2; index < process.argv.length; index += 1) {
+    const argument = process.argv[index];
+    if (argument === "--cli") continue;
+    if (argument === "--profile") {
+      index += 1;
+      continue;
+    }
+    if (argument.startsWith("--profile=")) continue;
+    hostArguments.push(argument);
+  }
+  const exitCode = await runHostCommand(hostArguments);
   app.exit(Number.isInteger(exitCode) ? exitCode : 0);
 }
 

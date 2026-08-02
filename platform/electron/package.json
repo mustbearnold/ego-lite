@@ -31,6 +31,7 @@
     "test:migrated-tabs": "xvfb-run --auto-servernum node test/migrated-tabs.mjs",
     "test:password-migration": "node test/password-migration.mjs",
     "test:private-tabs": "xvfb-run --auto-servernum node test/private-tab-controls.mjs",
+    "test:profile-cli": "xvfb-run --auto-servernum node test/profile-cli.mjs",
     "test:profiles": "xvfb-run --auto-servernum node test/profile-controls.mjs",
     "test:session-restore": "xvfb-run --auto-servernum node test/session-restore.mjs",
     "test:profile-migration": "node test/profile-migration.mjs",

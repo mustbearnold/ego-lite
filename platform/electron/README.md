@@ -128,6 +128,12 @@ The detached profile probe verifies an explicit profile registry and the Profile
 npm run test:profiles
 ```
 
+The detached CLI profile probe verifies that `ego-lite --cli --profile work --doctor` routes both browser data and task-Space state to the selected profile:
+
+```bash
+npm run test:profile-cli
+```
+
 The migration-discovery probe verifies that all usable supported profiles are enumerated while the standalone single-profile helper refuses to guess when multiple profiles are available:
 
 ```bash
@@ -164,6 +170,6 @@ The snapshot-contract probe covers action marks, stable role locators, result li
 npm run test:snapshot-contract
 ```
 
-The packaged CLI exposes the same migration command as the standalone host, for example `ego-lite --cli --migrate-profile --from "$HOME/.config/google-chrome"`. Close the source browser first; only Chromium’s basic plaintext password store is imported.
+The packaged CLI exposes the same migration and diagnostic commands as the standalone host, for example `ego-lite --cli --profile work --doctor` or `ego-lite --cli --migrate-profile --from "$HOME/.config/google-chrome"`. Close the source browser first; only Chromium’s basic plaintext password store is imported.
 
 Do not run the Electron package and the standalone Linux host against the same profile at the same time. Set `EGO_LITE_PROFILE_DIR` to use a separate profile.
