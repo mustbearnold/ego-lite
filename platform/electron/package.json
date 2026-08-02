@@ -29,6 +29,7 @@
     "test:find-in-page": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/find-in-page.mjs",
     "test:fullscreen": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/fullscreen.mjs",
     "test:history": "node test/history.mjs",
+    "test:last-tab": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/last-tab.mjs",
     "test:reading-list": "node test/reading-list.mjs",
     "test:import-data": "xvfb-run --auto-servernum node test/import-data.mjs",
     "test:migration-discovery": "node test/migration-discovery.mjs",

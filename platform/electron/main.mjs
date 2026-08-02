@@ -1455,6 +1455,7 @@ async function closeManagedView(targetId) {
   const managed = managedViews.get(targetId);
   if (!managed) return { closed: false };
   const wasPrimary = managed.spaceId === null;
+  const closedSpaceId = managed.spaceId;
   const wasActive = managed.view === browserView;
   managedViews.delete(targetId);
   if (wasActive) {
@@ -1464,12 +1465,28 @@ async function closeManagedView(targetId) {
     if (fallback) setActiveBrowserView(fallback);
   }
   managed.view.webContents.close();
-  if (wasPrimary && primaryManagedViews().length === 0 && mainWindow) {
-    const replacement = await createPrimaryBrowserView({
-      url: "about:blank",
-      tabId: "default",
-    });
-    setActiveBrowserView(replacement.view);
+  if (closedSpaceId !== null) {
+    const state = readTaskSpaceState();
+    if (
+      state.spaces.some((space) => space.id === closedSpaceId) &&
+      ![...managedViews.values()].some(
+        (candidate) => candidate.spaceId === closedSpaceId,
+      )
+    ) {
+      state.spaces = state.spaces.filter(
+        (space) => space.id !== closedSpaceId,
+      );
+      writeTaskSpaceState(state);
+    }
+  }
+  if (
+    wasPrimary &&
+    primaryManagedViews().length === 0 &&
+    mainWindow &&
+    !mainWindow.isDestroyed()
+  ) {
+    mainWindow.close();
+    return { closed: true, windowClosed: true };
   }
   publishBrowserState();
   return { closed: true };

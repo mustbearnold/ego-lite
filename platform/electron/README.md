@@ -72,9 +72,15 @@ The native window restores its last usable position and size, keeps the normal b
 npm run test:window-state
 ```
 
+Closing the last primary tab closes the native window; closing the last tab in a Task Space removes that Space instead of leaving an empty entry. The detached lifecycle probe covers both behaviors:
+
+```bash
+npm run test:last-tab
+```
+
 The Spaces menu lists active agent workspaces and exposes Take over/Return control plus Stop actions; stopping a Space closes its task tabs and removes its persisted task state.
 
-The Electron toolbar also provides New tab and Close tab controls, with Ctrl/Cmd+T and Ctrl/Cmd+W shortcuts from either the toolbar or the focused page; closing the final primary tab keeps one blank replacement tab available.
+The Electron toolbar also provides New tab and Close tab controls, with Ctrl/Cmd+T and Ctrl/Cmd+W shortcuts from either the toolbar or the focused page; closing the final primary tab closes the native window.
 
 When a Space is revealed, the toolbar’s live control badge reports whether the Space is under agent or user control; it follows the ownership state written by the SDK’s handoff and takeover methods.
 
