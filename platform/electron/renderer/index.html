@@ -32,6 +32,78 @@
         position: relative;
       }
 
+      #tab-strip {
+        align-items: stretch;
+        background: #0f172a;
+        border-bottom: 1px solid #374151;
+        display: flex;
+        gap: 4px;
+        height: 36px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        padding: 4px 8px;
+        scrollbar-width: thin;
+      }
+
+      .tab-chip {
+        align-items: stretch;
+        background: #1f2937;
+        border: 1px solid #374151;
+        border-radius: 6px 6px 0 0;
+        display: flex;
+        flex: 0 1 220px;
+        min-width: 120px;
+        max-width: 280px;
+        overflow: hidden;
+      }
+
+      .tab-chip[data-active="true"] {
+        background: #374151;
+        border-color: #6b7280;
+      }
+
+      .tab-chip[data-group-color="blue"] { border-top: 3px solid #60a5fa; }
+      .tab-chip[data-group-color="red"] { border-top: 3px solid #f87171; }
+      .tab-chip[data-group-color="yellow"] { border-top: 3px solid #facc15; }
+      .tab-chip[data-group-color="green"] { border-top: 3px solid #4ade80; }
+      .tab-chip[data-group-color="pink"] { border-top: 3px solid #f472b6; }
+      .tab-chip[data-group-color="purple"] { border-top: 3px solid #c084fc; }
+      .tab-chip[data-group-color="cyan"] { border-top: 3px solid #22d3ee; }
+      .tab-chip[data-group-color="orange"] { border-top: 3px solid #fb923c; }
+
+      .tab-chip-main,
+      .tab-chip-close {
+        border: 0;
+        border-radius: 0;
+        height: 26px;
+        min-width: 0;
+      }
+
+      .tab-chip-main {
+        background: transparent;
+        flex: 1;
+        overflow: hidden;
+        padding: 0 8px;
+        text-align: left;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .tab-chip-main:hover,
+      .tab-chip-close:hover {
+        background: rgba(255, 255, 255, 0.08);
+      }
+
+      .tab-chip-close {
+        background: transparent;
+        font-size: 14px;
+        padding: 0 7px;
+      }
+
+      #tab-picker {
+        display: none;
+      }
+
       button {
         background: #1f2937;
         border: 1px solid #4b5563;
@@ -772,6 +844,7 @@
         <button id="find-close" type="button" title="Close find bar" aria-label="Close find bar">×</button>
       </div>
     </div>
+    <div id="tab-strip" role="tablist" aria-label="Tabs"></div>
     <script>
       const address = document.querySelector("#address");
       const status = document.querySelector("#status");
@@ -802,6 +875,7 @@
       const downloadMenu = document.querySelector("#download-menu");
       const downloadList = document.querySelector("#download-list");
       const tabPicker = document.querySelector("#tab-picker");
+      const tabStrip = document.querySelector("#tab-strip");
       const spaceMenu = document.querySelector("#space-menu");
       const spaceList = document.querySelector("#space-list");
       const groupMenu = document.querySelector("#group-menu");
@@ -1155,8 +1229,60 @@
         });
       }
 
+      function renderTabStrip(tabs = []) {
+        tabStrip.replaceChildren();
+        tabStrip.dataset.count = String(tabs.length);
+        for (const tab of tabs) {
+          const label = tabLabel(tab);
+          const chip = document.createElement("div");
+          chip.className = "tab-chip";
+          chip.dataset.targetId = tab.targetId;
+          chip.dataset.active = String(Boolean(tab.active));
+          if (tab.tabGroup?.color) {
+            chip.dataset.groupColor = tab.tabGroup.color;
+          }
+          chip.hidden = Boolean(tab.tabGroup?.collapsed && !tab.active);
+
+          const activate = document.createElement("button");
+          activate.type = "button";
+          activate.className = "tab-chip-main";
+          activate.setAttribute("role", "tab");
+          activate.setAttribute("aria-selected", String(Boolean(tab.active)));
+          activate.setAttribute("aria-label", `Open tab: ${label}`);
+          activate.textContent = label;
+          activate.title = tab.url || label;
+          activate.addEventListener("click", async () => {
+            try {
+              applyTabs(await window.egoLite.activateTab(tab.targetId));
+            } catch (error) {
+              status.textContent = error.message;
+            }
+          });
+
+          const close = document.createElement("button");
+          close.type = "button";
+          close.className = "tab-chip-close";
+          close.dataset.tabAction = "close";
+          close.setAttribute("aria-label", `Close tab: ${label}`);
+          close.title = "Close tab";
+          close.textContent = "×";
+          close.addEventListener("click", async (event) => {
+            event.stopPropagation();
+            try {
+              applyTabs(await window.egoLite.closeTab(tab.targetId));
+            } catch (error) {
+              status.textContent = error.message;
+            }
+          });
+
+          chip.append(activate, close);
+          tabStrip.append(chip);
+        }
+      }
+
       function applyTabs(tabs = []) {
         currentTabs = tabs;
+        renderTabStrip(tabs);
         tabPicker.replaceChildren();
         const activeTab = tabs.find((tab) => tab.active);
         muteTab.disabled = !activeTab;

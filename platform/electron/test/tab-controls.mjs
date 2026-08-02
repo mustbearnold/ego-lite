@@ -223,9 +223,9 @@ try {
       const value = await evaluate(
         connection,
         attached.sessionId,
-        "(() => ({newTab: !!document.querySelector('#new-tab'), closeTab: !!document.querySelector('#close-tab')}))()",
+        "(() => ({newTab: !!document.querySelector('#new-tab'), closeTab: !!document.querySelector('#close-tab'), tabStrip: !!document.querySelector('#tab-strip')}))()",
       );
-      return value?.newTab && value.closeTab ? value : null;
+      return value?.newTab && value.closeTab && value.tabStrip ? value : null;
     });
     await evaluate(
       connection,
@@ -253,6 +253,14 @@ try {
       const result = await bridgeRequest(bridge, "/tabs");
       const tabs = result.tabs?.filter((tab) => tab.spaceId === null) || [];
       return tabs.length === 2 && tabs.some((tab) => tab.active) ? tabs : null;
+    });
+    const tabStripAfterNew = await waitFor("visible tab strip", async () => {
+      const value = await evaluate(
+        connection,
+        attached.sessionId,
+        "(() => ({count: document.querySelectorAll('#tab-strip .tab-chip').length, active: document.querySelector('#tab-strip .tab-chip[data-active=\"true\"] .tab-chip-main')?.textContent || '', closeButtons: document.querySelectorAll('#tab-strip .tab-chip-close').length}))()",
+      );
+      return value?.count === 2 && value.closeButtons === 2 ? value : null;
     });
     const newTab = afterNewTab.find((tab) => tab.active);
     if (!newTab || newTab.targetId === initial.tabs[0].targetId) {
@@ -365,9 +373,25 @@ try {
           : null;
       },
     );
+    await evaluate(
+      connection,
+      attached.sessionId,
+      "document.querySelector('#tab-strip .tab-chip:not([data-active=\"true\"]) .tab-chip-close')?.click(); true",
+    );
+    const afterNonActiveClose = await waitFor(
+      "non-active tab strip close",
+      async () => {
+        const result = await bridgeRequest(bridge, "/tabs");
+        const tabs = result.tabs?.filter((tab) => tab.spaceId === null) || [];
+        return tabs.length === 1 && tabs[0].active && tabs[0].url === fixtureUrl
+          ? tabs
+          : null;
+      },
+    );
     console.log(
       JSON.stringify({
         controls,
+        tabStripAfterNew,
         addressShortcut,
         initialTargetId: initial.tabs[0].targetId,
         afterNewTab: afterNewTab.map((tab) => ({
@@ -384,6 +408,7 @@ try {
         canReopenAfterReopen,
         afterNativeClose,
         nativeReopenedUrl: afterNativeReopen.find((tab) => tab.active)?.url,
+        afterNonActiveClose,
       }),
     );
   } finally {

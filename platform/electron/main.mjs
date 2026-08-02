@@ -154,6 +154,7 @@ const EXTENSION_STATE_PATH = resolve(
     join(PROFILE_DIR, "ego-lite-extensions.json"),
 );
 const TOOLBAR_HEIGHT = 52;
+const TAB_STRIP_HEIGHT = 36;
 const WINDOW_MIN_WIDTH = 720;
 const WINDOW_MIN_HEIGHT = 480;
 const WINDOW_DEFAULT_WIDTH = 1440;
@@ -1214,9 +1215,9 @@ function resizeBrowserView() {
   const { width, height } = mainWindow.getContentBounds();
   browserView.setBounds({
     x: 0,
-    y: TOOLBAR_HEIGHT,
+    y: TOOLBAR_HEIGHT + TAB_STRIP_HEIGHT,
     width: Math.max(1, width),
-    height: Math.max(1, height - TOOLBAR_HEIGHT),
+    height: Math.max(1, height - TOOLBAR_HEIGHT - TAB_STRIP_HEIGHT),
   });
 }
 
@@ -2911,7 +2912,11 @@ ipcMain.handle("ego-lite:new-tab", () => createUserTab());
 ipcMain.handle("ego-lite:new-private-tab", () =>
   createUserTab({ privateMode: true }),
 );
-ipcMain.handle("ego-lite:close-tab", () => closeActiveTab());
+ipcMain.handle("ego-lite:close-tab", async (_event, targetId) => {
+  if (targetId) await closeManagedView(String(targetId));
+  else await closeActiveTab();
+  return managedTabState();
+});
 ipcMain.handle("ego-lite:reopen-closed-tab", () => reopenClosedTab());
 ipcMain.handle("ego-lite:set-space-ownership", (_event, value) =>
   setTaskSpaceOwnership(value || {}),
