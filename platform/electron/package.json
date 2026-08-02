@@ -20,6 +20,8 @@
     "test:background-space": "xvfb-run --auto-servernum node test/background-space.mjs",
     "test:cookie-parity": "npm run build:sdk && xvfb-run --auto-servernum node test/cookie-inheritance.mjs",
     "test:extension-loading": "xvfb-run --auto-servernum node test/extension-loading.mjs",
+    "test:migration-discovery": "node test/migration-discovery.mjs",
+    "test:migration-prompt": "xvfb-run --auto-servernum node test/migration-prompt.mjs",
     "test:profile-migration": "node test/profile-migration.mjs",
     "test:profile-migration:electron": "xvfb-run --auto-servernum env EGO_LITE_ELECTRON_MIGRATION=1 node test/profile-migration.mjs",
     "test:snapshot-contract": "node test/snapshot-contract.mjs",
@@ -39,6 +41,7 @@
     "asar": true,
     "files": [
       "main.mjs",
+      "migration-discovery.mjs",
       "preload.mjs",
       "renderer/**"
     ],

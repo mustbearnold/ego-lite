@@ -1266,6 +1266,20 @@ async function canConnect(endpoint) {
   }
 }
 
+async function isElectronEndpoint(endpoint) {
+  if (!endpoint) return false;
+  const connection = new BrowserConnection(endpoint.url);
+  try {
+    await connection.connect();
+    const version = await connection.request("Browser.getVersion");
+    return /Electron\//.test(version.userAgent || "");
+  } catch {
+    return false;
+  } finally {
+    connection.close();
+  }
+}
+
 async function readElectronBridge(profileDir) {
   try {
     const bridge = JSON.parse(
@@ -1380,7 +1394,11 @@ async function ensureProfileNotRunning(userDataDir, label) {
     );
   }
   const endpoint = await readDevToolsEndpoint(userDataDir);
-  if (endpoint && (await canConnect(endpoint))) {
+  const allowSelfElectron =
+    process.env.EGO_LITE_ALLOW_SELF_ELECTRON_MIGRATION === "1" &&
+    label === "ego lite" &&
+    (await isElectronEndpoint(endpoint));
+  if (endpoint && !allowSelfElectron && (await canConnect(endpoint))) {
     fail(`close ${label} before migration; it is still exposing CDP`);
   }
 }

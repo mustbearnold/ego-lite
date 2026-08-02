@@ -1,4 +1,11 @@
-import { app, BrowserView, BrowserWindow, ipcMain, session } from "electron";
+import {
+  app,
+  BrowserView,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  session,
+} from "electron";
 import { mkdirSync } from "node:fs";
 import { readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -6,6 +13,10 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
+import {
+  findSingleMigrationProfile,
+  profileLooksUsable,
+} from "./migration-discovery.mjs";
 
 const MAIN_DIR = dirname(fileURLToPath(import.meta.url));
 const PROFILE_DIR = resolve(
@@ -49,6 +60,7 @@ let bridgeServer;
 let bridgeToken;
 let agentTaskState = null;
 const bridgeFile = join(PROFILE_DIR, "ego-lite-bridge.json");
+const MIGRATION_PROMPT_MARKER = join(PROFILE_DIR, ".migration-prompted");
 
 const permissionAliases = {
   clipboardReadWrite: ["clipboard-read", "clipboard-sanitized-write"],
@@ -601,14 +613,114 @@ async function createWindow() {
   void mainWindow.loadFile(join(MAIN_DIR, "renderer", "index.html"));
 }
 
-async function runPackagedCli() {
-  const hostPath = app.isPackaged
+function hostResourcePath() {
+  return app.isPackaged
     ? join(process.resourcesPath, "ego-lite", "linux", "ego-browser.mjs")
     : resolve(MAIN_DIR, "..", "linux", "ego-browser.mjs");
+}
+
+async function runHostCommand(args) {
+  const hostPath = hostResourcePath();
   const { runHost } = await import(pathToFileURL(hostPath).href);
-  const args = process.argv.slice(2).filter((arg) => arg !== "--cli");
-  const exitCode = await runHost(args);
+  return runHost(args);
+}
+
+async function runPackagedCli() {
+  const exitCode = await runHostCommand(
+    process.argv.slice(2).filter((arg) => arg !== "--cli"),
+  );
   app.exit(Number.isInteger(exitCode) ? exitCode : 0);
+}
+
+async function maybeOfferPackagedMigration() {
+  const promptEnabled =
+    app.isPackaged || process.env.EGO_LITE_MIGRATION_PROMPT === "1";
+  if (
+    !promptEnabled ||
+    CLI_MODE ||
+    process.env.EGO_LITE_SKIP_MIGRATION === "1"
+  ) {
+    return { stopped: false };
+  }
+
+  try {
+    await readFile(MIGRATION_PROMPT_MARKER, "utf8");
+    return { stopped: false };
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+
+  if (await profileLooksUsable(join(PROFILE_DIR, "Default"))) {
+    return { stopped: false };
+  }
+  const source = await findSingleMigrationProfile();
+  if (!source) return { stopped: false };
+
+  await writeFile(
+    MIGRATION_PROMPT_MARKER,
+    `${new Date().toISOString()}\nsource=${source.profileDir}\n`,
+  );
+
+  const forcedChoice = app.isPackaged
+    ? undefined
+    : process.env.EGO_LITE_MIGRATION_CHOICE;
+  let response;
+  if (forcedChoice === "migrate") response = 0;
+  else if (forcedChoice === "skip") response = 1;
+  else {
+    ({ response } = await dialog.showMessageBox({
+      type: "question",
+      title: "Bring your browser setup to ego lite?",
+      message: `A ${source.name} profile is available for migration.`,
+      detail:
+        "Migrate bookmarks, settings, extensions, storage, and readable cookies into ego lite. Saved passwords are not copied. Close the source browser before continuing.",
+      buttons: ["Migrate now", "Keep separate"],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    }));
+  }
+  if (response !== 0) return { stopped: false };
+
+  app.releaseSingleInstanceLock();
+  let exitCode = 1;
+  const previousSelfMigrationFlag =
+    process.env.EGO_LITE_ALLOW_SELF_ELECTRON_MIGRATION;
+  process.env.EGO_LITE_ALLOW_SELF_ELECTRON_MIGRATION = "1";
+  try {
+    exitCode = await runHostCommand([
+      "--migrate-profile",
+      "--from",
+      source.profileDir,
+    ]);
+  } catch (error) {
+    console.error(
+      `[ego-lite] packaged profile migration failed: ${error?.stack || error?.message || String(error)}`,
+    );
+  } finally {
+    if (previousSelfMigrationFlag === undefined) {
+      delete process.env.EGO_LITE_ALLOW_SELF_ELECTRON_MIGRATION;
+    } else {
+      process.env.EGO_LITE_ALLOW_SELF_ELECTRON_MIGRATION =
+        previousSelfMigrationFlag;
+    }
+  }
+  const reacquired = app.requestSingleInstanceLock();
+  if (!reacquired) {
+    app.quit();
+    return { stopped: true };
+  }
+  if (exitCode !== 0) {
+    await dialog.showMessageBox({
+      type: "warning",
+      title: "Profile migration did not finish",
+      message: "ego lite will start with its separate Linux profile.",
+      detail:
+        "You can retry later with ego-lite --migrate-profile --from /path/to/browser-profile after closing the source browser.",
+      buttons: ["Continue"],
+    });
+  }
+  return { stopped: false };
 }
 
 ipcMain.handle("ego-lite:navigate", (_event, value) => navigate(value));
@@ -645,6 +757,15 @@ if (!hasSingleInstance) {
   });
 
   app.whenReady().then(async () => {
+    if (!CLI_MODE) {
+      const migration = await maybeOfferPackagedMigration().catch((error) => {
+        console.error(
+          `[ego-lite] migration onboarding failed: ${error?.stack || error?.message || String(error)}`,
+        );
+        return { stopped: false };
+      });
+      if (migration.stopped) return;
+    }
     if (CLI_MODE) {
       if (!CLI_PROFILE_MIGRATION) {
         await createWindow();

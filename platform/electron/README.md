@@ -36,6 +36,8 @@ The RPM target requires `rpmbuild`: install `rpm-tools` on Arch-based systems or
 
 The package includes the Linux host, built SDK, and `ego-browser` skill under its resources. Sign in through the primary visible tab; each new task Space starts with a cookie snapshot from that session, then keeps its own persistent cookie jar. The packaged executable also accepts `--cli`, so a smoke check can use `ego-lite --cli --doctor` or run the SDK through `ego-lite --cli nodejs`. Linux artifacts are written to `platform/electron/dist/`.
 
+On the first packaged-app launch, when exactly one supported Chromium-family profile is found and the ego lite profile is still empty, a one-time migration prompt offers to copy portable browser data before the browser window opens. Set `EGO_LITE_SKIP_MIGRATION=1` for unattended launches; choosing to keep profiles separate records the decision in the target profile. Saved passwords remain excluded from migration.
+
 Agent-created task tabs stay in the background by default, so creating or navigating a Space does not replace the user’s visible tab. Use the toolbar’s tab picker to inspect or reveal a Space explicitly.
 
 Labeled pointer actions from the SDK update the local toolbar task status and briefly draw a pointer ring in the selected page. The DOM probe checks both effects without opening a foreground window:
@@ -60,6 +62,18 @@ The profile-migration probe verifies explicit Chrome-data migration, backup crea
 
 ```bash
 npm run test:profile-migration
+```
+
+The migration-discovery probe verifies that onboarding selects only one usable supported profile and refuses to guess when multiple profiles are available:
+
+```bash
+npm run test:migration-discovery
+```
+
+The detached onboarding probe verifies that the one-time decision marker is written before the browser bridge starts:
+
+```bash
+npm run test:migration-prompt
 ```
 
 The Electron-specific variant verifies the packaged CLI path without opening a browser window:

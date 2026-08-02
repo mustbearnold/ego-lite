@@ -54,7 +54,7 @@ The browser profile is stored under `~/.local/share/ego-lite/chromium-profile`; 
 
 The Linux host uses Chromium's standard accessibility tree for semantic snapshots. It preserves the existing SDK, task-space ownership, browser permission CDP, screenshots, downloads, uploads, and locator behavior, but it cannot reproduce the closed-source macOS app's custom snapshot engine. To migrate portable Chrome-family data, close the source browser and run `ego-lite --migrate-profile --from "$HOME/.config/google-chrome"`; the command backs up replaced data, copies portable settings/bookmarks/storage, and transfers readable cookies, but intentionally does not import encrypted passwords.
 
-For a self-contained Electron package with embedded Chromium, run `npm install` and `npm run package:appimage` from `platform/electron`. The AppImage includes the Linux host, SDK, and skill resources; launch it normally for the desktop browser or pass `--cli` for the bundled `ego-browser` command path.
+For a self-contained Electron package with embedded Chromium, run `npm install` and `npm run package:appimage` from `platform/electron`. The AppImage includes the Linux host, SDK, and skill resources; launch it normally for the desktop browser or pass `--cli` for the bundled `ego-browser` command path. On a fresh packaged-app profile, the first launch offers the same one-time migration decision before opening the browser window; `EGO_LITE_SKIP_MIGRATION=1` suppresses it for unattended launches.
 
 ## After installing: confirm `ego-browser` is available
 
