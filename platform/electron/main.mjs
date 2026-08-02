@@ -1655,6 +1655,66 @@ function updateTabGroup({ id, collapsed }) {
   return managedTabState();
 }
 
+const TAB_GROUP_COLORS = new Set([
+  "grey",
+  "blue",
+  "red",
+  "yellow",
+  "green",
+  "pink",
+  "purple",
+  "cyan",
+  "orange",
+]);
+
+function normalizeTabGroupTitle(value) {
+  return String(value || "New group").trim().slice(0, 80) || "New group";
+}
+
+function normalizeTabGroupColor(value) {
+  const color = String(value || "grey").trim().toLowerCase();
+  return TAB_GROUP_COLORS.has(color) ? color : "grey";
+}
+
+function setTabGroup({
+  targetId = null,
+  groupId = null,
+  title,
+  color,
+  ungroup = false,
+}) {
+  const managed = targetId
+    ? managedViews.get(String(targetId))
+    : managedRecordForView(browserView);
+  if (!managed) throw new Error("active tab not found");
+  if (managed.spaceId !== null || managed.private) {
+    throw new Error("tab groups are available only for normal tabs");
+  }
+  if (ungroup) {
+    managed.tabGroup = null;
+    publishBrowserState();
+    return managedTabState();
+  }
+
+  let group = null;
+  if (groupId) {
+    group = [...managedViews.values()]
+      .map((candidate) => candidate.tabGroup)
+      .find((candidate) => candidate?.id === String(groupId));
+    if (!group) throw new Error(`tab group not found: ${groupId}`);
+  }
+  managed.tabGroup = group
+    ? { ...group }
+    : {
+        id: `group-${randomUUID()}`,
+        title: normalizeTabGroupTitle(title),
+        color: normalizeTabGroupColor(color),
+        collapsed: false,
+      };
+  publishBrowserState();
+  return managedTabState();
+}
+
 async function highlightAgentPointer({ targetId, x, y }) {
   const view = managedViewForTarget(targetId);
   const point = { x: Number(x), y: Number(y) };
@@ -2477,9 +2537,13 @@ ipcMain.handle("ego-lite:remove-reading-list", (_event, url) =>
 ipcMain.handle("ego-lite:set-extension", (_event, value) =>
   setExtensionEnabled(value || {}),
 );
-ipcMain.handle("ego-lite:set-tab-group", (_event, value) =>
-  updateTabGroup(value || {}),
-);
+ipcMain.handle("ego-lite:set-tab-group", (_event, value) => {
+  const request = value || {};
+  if (request.ungroup || request.groupId || request.targetId || request.title) {
+    return setTabGroup(request);
+  }
+  return updateTabGroup(request);
+});
 ipcMain.handle("ego-lite:new-tab", () => createUserTab());
 ipcMain.handle("ego-lite:new-private-tab", () =>
   createUserTab({ privateMode: true }),

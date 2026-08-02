@@ -249,6 +249,20 @@
         width: 100%;
       }
 
+      .group-row {
+        display: flex;
+        gap: 4px;
+      }
+
+      .group-row > button:first-child {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .group-row > button:last-child {
+        width: auto;
+      }
+
       #bookmark-list {
         background: #1f2937;
         border: 1px solid #4b5563;
@@ -617,6 +631,9 @@
       <button id="close-tab" type="button" title="Close tab" aria-label="Close tab">
         ×
       </button>
+      <button id="group-tab" type="button" title="Group tab" aria-label="Group tab">
+        Group
+      </button>
       <button id="import-data" type="button" title="Import browser data">
         Import
       </button>
@@ -673,6 +690,7 @@
       const newTab = document.querySelector("#new-tab");
       const newPrivateTab = document.querySelector("#new-private-tab");
       const closeTab = document.querySelector("#close-tab");
+      const groupTab = document.querySelector("#group-tab");
       const importData = document.querySelector("#import-data");
       const profileMenu = document.querySelector("#profile-menu");
       const profileList = document.querySelector("#profile-list");
@@ -699,6 +717,7 @@
       const findPrevious = document.querySelector("#find-previous");
       const findNext = document.querySelector("#find-next");
       const findClose = document.querySelector("#find-close");
+      let currentTabs = [];
 
       function tabLabel(tab) {
         const space =
@@ -1040,6 +1059,7 @@
       }
 
       function applyTabs(tabs = []) {
+        currentTabs = tabs;
         tabPicker.replaceChildren();
         const activeTab = tabs.find((tab) => tab.active);
         muteTab.disabled = !activeTab;
@@ -1048,6 +1068,17 @@
         muteTab.setAttribute(
           "aria-label",
           activeTab?.muted ? "Unmute tab" : "Mute tab",
+        );
+        const canGroup = Boolean(
+          activeTab && activeTab.spaceId === null && !activeTab.private,
+        );
+        const isGrouped = Boolean(activeTab?.tabGroup);
+        groupTab.disabled = !canGroup;
+        groupTab.textContent = isGrouped ? "Ungroup" : "Group";
+        groupTab.title = isGrouped ? "Remove tab from group" : "Group tab";
+        groupTab.setAttribute(
+          "aria-label",
+          isGrouped ? "Remove tab from group" : "Group tab",
         );
         const groups = new Map();
         for (const tab of tabs) {
@@ -1076,8 +1107,11 @@
         groupList.replaceChildren();
         groupMenu.hidden = groups.size === 0;
         for (const { data: group } of groups.values()) {
+          const row = document.createElement("div");
+          row.className = "group-row";
           const button = document.createElement("button");
           button.type = "button";
+          button.dataset.groupAction = "collapse";
           button.setAttribute("role", "menuitemcheckbox");
           button.setAttribute("aria-checked", String(!group.collapsed));
           button.setAttribute(
@@ -1096,7 +1130,32 @@
               status.textContent = error.message;
             }
           });
-          groupList.append(button);
+          row.append(button);
+          const add = document.createElement("button");
+          add.type = "button";
+          add.dataset.groupAction = "add-tab";
+          add.textContent = "Add current tab";
+          add.disabled = Boolean(
+            !activeTab ||
+              activeTab.spaceId !== null ||
+              activeTab.private ||
+              activeTab.tabGroup?.id === group.id,
+          );
+          add.setAttribute("aria-label", `Add current tab to ${group.title || "tab group"}`);
+          add.addEventListener("click", async () => {
+            try {
+              applyTabs(
+                await window.egoLite.setTabGroup({
+                  targetId: activeTab.targetId,
+                  groupId: group.id,
+                }),
+              );
+            } catch (error) {
+              status.textContent = error.message;
+            }
+          });
+          row.append(add);
+          groupList.append(row);
         }
       }
 
@@ -1170,6 +1229,24 @@
       closeTab.addEventListener("click", async () => {
         try {
           applyTabs(await window.egoLite.closeTab());
+        } catch (error) {
+          status.textContent = error.message;
+        }
+      });
+      groupTab.addEventListener("click", async () => {
+        const activeTab = currentTabs.find((tab) => tab.active);
+        if (!activeTab || activeTab.spaceId !== null || activeTab.private) return;
+        try {
+          const tabs = await window.egoLite.setTabGroup(
+            activeTab.tabGroup
+              ? { targetId: activeTab.targetId, ungroup: true }
+              : {
+                  targetId: activeTab.targetId,
+                  title: window.prompt("Tab group name", "New group") || "New group",
+                  color: "grey",
+                },
+          );
+          applyTabs(tabs);
         } catch (error) {
           status.textContent = error.message;
         }

@@ -98,6 +98,12 @@ npm run test:server-name
 
 The Electron toolbar also provides New tab and Close tab controls, with Ctrl/Cmd+T and Ctrl/Cmd+W shortcuts from either the toolbar or the focused page; closing the final primary tab closes the native window.
 
+Normal primary tabs can be grouped or ungrouped from the toolbar, and an existing group can absorb the active tab. Private and Agent tabs remain outside user tab groups. The detached DOM/bridge probe covers creation, assignment, removal, and the scope guard:
+
+```bash
+npm run test:tab-groups
+```
+
 When a Space is revealed, the toolbar’s live control badge reports whether the Space is under agent or user control; it follows the ownership state written by the SDK’s handoff and takeover methods.
 
 Labeled pointer actions from the SDK update the local toolbar task status and briefly draw a pointer ring in the selected page. The DOM probe checks both effects without opening a foreground window:
