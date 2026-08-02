@@ -16,6 +16,7 @@
   "scripts": {
     "build:sdk": "npm --prefix ../../package/ego-browser run build",
     "start": "electron .",
+    "test:agent-visuals": "xvfb-run --auto-servernum node test/agent-visuals.mjs",
     "test:background-space": "xvfb-run --auto-servernum node test/background-space.mjs",
     "test:cookie-parity": "npm run build:sdk && xvfb-run --auto-servernum node test/cookie-inheritance.mjs",
     "test:extension-loading": "xvfb-run --auto-servernum node test/extension-loading.mjs",

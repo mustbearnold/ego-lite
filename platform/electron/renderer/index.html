@@ -141,7 +141,7 @@
 
       function applyState(state) {
         address.value = state.url || "about:blank";
-        status.textContent = state.title || "ego lite";
+        status.textContent = state.agentTaskState || state.title || "ego lite";
         back.disabled = !state.canGoBack;
         forward.disabled = !state.canGoForward;
         applyTabs(state.tabs);

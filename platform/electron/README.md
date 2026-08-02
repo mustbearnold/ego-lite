@@ -38,6 +38,12 @@ The package includes the Linux host, built SDK, and `ego-browser` skill under it
 
 Agent-created task tabs stay in the background by default, so creating or navigating a Space does not replace the user’s visible tab. Use the toolbar’s tab picker to inspect or reveal a Space explicitly.
 
+Labeled pointer actions from the SDK update the local toolbar task status and briefly draw a pointer ring in the selected page. The DOM probe checks both effects without opening a foreground window:
+
+```bash
+npm run test:agent-visuals
+```
+
 The Electron task-space cookie inheritance probe runs under a disposable profile and verifies both login-state inheritance and per-Space cookie isolation:
 
 ```bash

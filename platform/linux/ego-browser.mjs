@@ -734,9 +734,21 @@ class LinuxEgoHost {
     });
   }
 
-  animationHighlightMouseToPosition() {}
+  animationHighlightMouseToPosition(x, y) {
+    if (!this.electronBridge || !this.selectedTargetId) return;
+    void this.electronBridge
+      .request("/highlight", {
+        targetId: this.selectedTargetId,
+        x,
+        y,
+      })
+      .catch(() => {});
+  }
 
-  setAgentTaskState() {}
+  setAgentTaskState(label) {
+    if (!this.electronBridge) return;
+    void this.electronBridge.request("/agent-state", { label }).catch(() => {});
+  }
 
   sendCDPMessage(payload) {
     let message;

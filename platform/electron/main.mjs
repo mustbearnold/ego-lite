@@ -47,6 +47,7 @@ const sessionPermissionStates = new WeakMap();
 const sessionExtensionLoads = new WeakMap();
 let bridgeServer;
 let bridgeToken;
+let agentTaskState = null;
 const bridgeFile = join(PROFILE_DIR, "ego-lite-bridge.json");
 
 const permissionAliases = {
@@ -89,6 +90,7 @@ function currentBrowserState() {
   return {
     title: browserView?.webContents.getTitle() || "ego lite",
     url: browserView?.webContents.getURL() || "about:blank",
+    agentTaskState,
     canGoBack: browserView?.webContents.navigationHistory.canGoBack() || false,
     canGoForward:
       browserView?.webContents.navigationHistory.canGoForward() || false,
@@ -428,6 +430,55 @@ async function closeManagedView(targetId) {
   return { closed: true };
 }
 
+function managedViewForTarget(targetId) {
+  if (targetId) return managedViews.get(targetId)?.view || null;
+  return browserView || null;
+}
+
+async function highlightAgentPointer({ targetId, x, y }) {
+  const view = managedViewForTarget(targetId);
+  const point = { x: Number(x), y: Number(y) };
+  if (!view) return { highlighted: false };
+  if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+    throw new Error("highlight requires finite x and y coordinates");
+  }
+  await view.webContents.executeJavaScript(
+    `(() => {
+    const previous = document.getElementById("ego-lite-agent-pointer-highlight");
+    previous?.remove();
+    const root = document.documentElement || document.body;
+    if (!root) return false;
+    const ring = document.createElement("div");
+    ring.id = "ego-lite-agent-pointer-highlight";
+    ring.setAttribute("aria-hidden", "true");
+    Object.assign(ring.style, {
+      position: "fixed",
+      left: ${JSON.stringify(point.x)} + "px",
+      top: ${JSON.stringify(point.y)} + "px",
+      width: "28px",
+      height: "28px",
+      border: "3px solid rgba(96, 165, 250, 0.95)",
+      borderRadius: "50%",
+      boxShadow: "0 0 0 4px rgba(96, 165, 250, 0.22)",
+      pointerEvents: "none",
+      zIndex: "2147483647",
+      transform: "translate(-50%, -50%) scale(0.7)",
+      opacity: "1",
+      transition: "transform 650ms ease-out, opacity 650ms ease-out",
+    });
+    root.appendChild(ring);
+    requestAnimationFrame(() => {
+      ring.style.transform = "translate(-50%, -50%) scale(1.55)";
+      ring.style.opacity = "0";
+    });
+    setTimeout(() => ring.remove(), 700);
+    return true;
+  })()`,
+    true,
+  );
+  return { highlighted: true };
+}
+
 function jsonResponse(response, status, payload) {
   response.writeHead(status, { "content-type": "application/json" });
   response.end(JSON.stringify(payload));
@@ -444,6 +495,13 @@ async function requestBody(request) {
 
 async function handleBridgeRequest(pathname, body) {
   if (pathname === "/health") return { ok: true };
+  if (pathname === "/agent-state") {
+    const value = body.label == null ? "" : String(body.label).trim();
+    agentTaskState = value ? value.slice(0, 120) : null;
+    publishBrowserState();
+    return { agentTaskState };
+  }
+  if (pathname === "/highlight") return highlightAgentPointer(body);
   if (pathname === "/create-tab") return createManagedView(body);
   if (pathname === "/activate-tab") {
     const managed = managedViews.get(body.targetId);
@@ -505,6 +563,9 @@ async function createWindow() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      // The local toolbar uses the ESM preload bridge; remote page content is
+      // hosted in separate BrowserViews with no preload access.
+      sandbox: false,
       preload: join(MAIN_DIR, "preload.mjs"),
     },
   });
