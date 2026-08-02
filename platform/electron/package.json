@@ -27,6 +27,7 @@
     "test:download-open": "node test/download-open.mjs",
     "test:extension-loading": "xvfb-run --auto-servernum node test/extension-loading.mjs",
     "test:find-in-page": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/find-in-page.mjs",
+    "test:fullscreen": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/fullscreen.mjs",
     "test:import-data": "xvfb-run --auto-servernum node test/import-data.mjs",
     "test:migration-discovery": "node test/migration-discovery.mjs",
     "test:migration-prompt": "xvfb-run --auto-servernum node test/migration-prompt.mjs",

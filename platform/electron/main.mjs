@@ -575,6 +575,7 @@ function currentBrowserState() {
     title: browserView?.webContents.getTitle() || "ego lite",
     url: browserView?.webContents.getURL() || "about:blank",
     profileId: ACTIVE_PROFILE_ID,
+    fullscreen: Boolean(mainWindow?.isFullScreen()),
     profiles: currentProfiles(),
     agentTaskState,
     controlState: currentControlState(),
@@ -827,13 +828,22 @@ function installViewListeners(view) {
   view.webContents.on("before-input-event", (event, input) => {
     if (input.type !== "keyDown" || input.isAutoRepeat) return;
     const rawKey = String(input.key || "");
-    if (rawKey.toLowerCase() === "f12") {
+    if (rawKey.toLowerCase() === "f11") {
       event.preventDefault();
-      toggleDevTools(view);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.setFullScreen(!mainWindow.isFullScreen());
+      }
       return;
     }
     if (input.alt || !(input.control || input.meta)) return;
     const key = String(input.key || "").toLowerCase();
+    if (input.control && input.meta && key === "f") {
+      event.preventDefault();
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.setFullScreen(!mainWindow.isFullScreen());
+      }
+      return;
+    }
     if (!input.shift && key === "f") {
       event.preventDefault();
       mainWindow?.webContents.send("ego-lite:focus-find");
@@ -1838,6 +1848,8 @@ async function createWindow() {
   mainWindow.on("move", scheduleWindowStateSave);
   mainWindow.on("maximize", scheduleWindowStateSave);
   mainWindow.on("unmaximize", scheduleWindowStateSave);
+  mainWindow.on("enter-full-screen", publishBrowserState);
+  mainWindow.on("leave-full-screen", publishBrowserState);
   mainWindow.on("close", saveWindowStateSync);
   mainWindow.on("closed", () => {
     if (windowStateSaveTimer) clearTimeout(windowStateSaveTimer);

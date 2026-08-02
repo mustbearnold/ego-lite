@@ -54,6 +54,12 @@ The toolbar exposes bookmarks imported into the Electron profile and a Private t
 npm run test:find-in-page
 ```
 
+`F11` toggles the native fullscreen window on Linux. The macOS-style `Ctrl+Cmd+F` chord is accepted as well; the detached X11/CDP probe verifies both transitions without opening the app on the user’s desktop:
+
+```bash
+npm run test:fullscreen
+```
+
 User downloads appear in the toolbar’s Downloads menu with progress, an Open action that uses the Linux desktop default application, and a Show action. Primary-tab downloads use `EGO_LITE_DOWNLOAD_DIR` when set, otherwise the normal `~/Downloads` directory; task-Space downloads retain the SDK/CDP-selected download path.
 
 The native window restores its last usable position and size, keeps the normal bounds behind a maximized session, and restores maximized state on the next launch. The detached X11/Xvfb probe covers seed, resize, quit, and restart restoration:
