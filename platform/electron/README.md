@@ -128,6 +128,12 @@ Agent task tabs start muted so background work cannot interrupt user audio. The 
 npm run test:tab-audio
 ```
 
+F12 toggles Developer Tools for the active BrowserView. The detached X11/CDP probe sends the native key and verifies the per-tab state without opening a foreground window:
+
+```bash
+npm run test:devtools
+```
+
 The detached profile probe verifies an explicit profile registry and the Profile toolbar menu without opening a foreground window:
 
 ```bash

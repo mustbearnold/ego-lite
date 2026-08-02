@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
+import { execFile, spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { promisify } from "node:util";
 
 const testDir = import.meta.dirname;
 const repoDir = resolve(testDir, "../../..");
@@ -10,9 +11,10 @@ const packagedExecutable = process.env.EGO_LITE_ELECTRON_EXECUTABLE;
 const electronPath =
   packagedExecutable || resolve(testDir, "../node_modules/.bin/electron");
 const electronArguments = packagedExecutable ? [] : ["platform/electron"];
-const profileDir = await mkdtemp(join(tmpdir(), "ego-electron-tab-audio-"));
+const profileDir = await mkdtemp(join(tmpdir(), "ego-electron-devtools-"));
 const bridgeFile = join(profileDir, "ego-lite-bridge.json");
 let electron;
+const execFileAsync = promisify(execFile);
 
 class CdpConnection {
   constructor(url) {
@@ -111,16 +113,32 @@ async function readEndpoint() {
   }
 }
 
-async function evaluate(connection, sessionId, expression) {
-  const result = await connection.request(
-    "Runtime.evaluate",
-    { expression, awaitPromise: true, returnByValue: true },
-    sessionId,
-  );
-  if (result.exceptionDetails) {
-    throw new Error(result.exceptionDetails.text || "DOM evaluation failed");
+async function readWindowId() {
+  try {
+    const { stdout } = await execFileAsync("xdotool", [
+      "search",
+      "--onlyvisible",
+      "--name",
+      "^ego lite$",
+    ]);
+    return stdout.trim().split(/\s+/).filter(Boolean)[0] || null;
+  } catch {
+    return null;
   }
-  return result.result?.value;
+}
+
+async function sendNativeKey(chord) {
+  const windowId = await waitFor("ego lite X11 window", readWindowId);
+  await execFileAsync("xdotool", ["windowfocus", "--sync", windowId]);
+  await execFileAsync("xdotool", [
+    "mousemove",
+    "--window",
+    windowId,
+    "400",
+    "300",
+  ]);
+  await execFileAsync("xdotool", ["click", "1"]);
+  await execFileAsync("xdotool", ["key", "--window", windowId, chord]);
 }
 
 function startElectron() {
@@ -169,92 +187,40 @@ try {
     const result = await bridgeRequest(bridge, "/tabs");
     return result.tabs?.find((tab) => tab.spaceId === null) || null;
   });
-  assert.equal(primary.muted, false, "user tabs should start unmuted");
-
-  const task = await bridgeRequest(bridge, "/create-tab", {
-    spaceId: 1,
-    spaceName: "audio parity",
-    url: "about:blank",
-  });
-  const taskState = await waitFor("muted task tab", async () => {
-    const result = await bridgeRequest(bridge, "/tabs");
-    const tab = result.tabs?.find((candidate) => candidate.targetId === task.targetId);
-    return tab?.muted === true ? tab : null;
-  });
-
-  const endpoint = await waitFor("Electron renderer CDP", readEndpoint);
+  const endpoint = await waitFor("browser CDP endpoint", readEndpoint);
   const connection = await new CdpConnection(endpoint).connect();
   try {
-    const renderer = await waitFor("toolbar target", async () => {
-      const targets = await connection.request("Target.getTargets");
-      return targets.targetInfos?.find((target) =>
-        target.url.includes("/renderer/index.html"),
-      );
-    });
-    const attached = await connection.request("Target.attachToTarget", {
-      targetId: renderer.targetId,
-      flatten: true,
-    });
-    const toolbar = await waitFor("mute toolbar control", async () => {
-      const value = await evaluate(
-        connection,
-        attached.sessionId,
-        "(() => ({exists: !!document.querySelector('#mute-tab'), label: document.querySelector('#mute-tab')?.getAttribute('aria-label'), disabled: document.querySelector('#mute-tab')?.disabled}))()",
-      );
-      return value?.exists && value.disabled === false ? value : null;
-    });
-
-    await evaluate(
-      connection,
-      attached.sessionId,
-      "document.querySelector('#mute-tab').click(); true",
-    );
-    const userMuted = await waitFor("user tab mute", async () => {
+    await sendNativeKey("F12");
+    const f12Open = await waitFor("F12 Developer Tools", async () => {
       const result = await bridgeRequest(bridge, "/tabs");
-      const tab = result.tabs?.find((candidate) => candidate.targetId === primary.targetId);
-      return tab?.muted === true ? tab : null;
-    });
-
-    await evaluate(
-      connection,
-      attached.sessionId,
-      "document.querySelector('#mute-tab').click(); true",
-    );
-    const userUnmuted = await waitFor("user tab unmute", async () => {
-      const result = await bridgeRequest(bridge, "/tabs");
-      const tab = result.tabs?.find((candidate) => candidate.targetId === primary.targetId);
-      return tab?.muted === false ? tab : null;
-    });
-
-    await bridgeRequest(bridge, "/activate-tab", { targetId: task.targetId });
-    const taskToolbar = await waitFor("active task mute label", async () => {
-      const value = await evaluate(
-        connection,
-        attached.sessionId,
-        "(() => ({label: document.querySelector('#mute-tab')?.getAttribute('aria-label'), text: document.querySelector('#mute-tab')?.textContent?.trim()}))()",
+      const tab = result.tabs?.find(
+        (candidate) => candidate.targetId === primary.targetId,
       );
-      return value?.label === "Unmute tab" ? value : null;
+      return tab?.devtoolsOpen === true ? tab : null;
     });
-    await evaluate(
-      connection,
-      attached.sessionId,
-      "document.querySelector('#mute-tab').click(); true",
+    const targetsAfterOpen = await connection.request("Target.getTargets");
+    const f12Devtools = targetsAfterOpen.targetInfos?.find((target) =>
+      target.url.startsWith("devtools://"),
     );
-    const taskUnmuted = await waitFor("task tab unmute", async () => {
+    assert.ok(f12Devtools, "F12 should create a DevTools target");
+    await connection.request("Target.closeTarget", {
+      targetId: f12Devtools.targetId,
+    });
+    const f12Closed = await waitFor("F12 Developer Tools close", async () => {
       const result = await bridgeRequest(bridge, "/tabs");
-      const tab = result.tabs?.find((candidate) => candidate.targetId === task.targetId);
-      return tab?.muted === false ? tab : null;
+      const tab = result.tabs?.find(
+        (candidate) => candidate.targetId === primary.targetId,
+      );
+      return tab?.devtoolsOpen === false ? tab : null;
     });
 
+    assert.equal(f12Open.devtoolsOpen, true);
+    assert.equal(f12Closed.devtoolsOpen, false);
     console.log(
       JSON.stringify({
-        primaryStartMuted: primary.muted,
-        taskStartMuted: taskState.muted,
-        toolbar,
-        userMuted: userMuted.muted,
-        userUnmuted: userUnmuted.muted,
-        taskToolbar,
-        taskUnmuted: taskUnmuted.muted,
+        f12Open: f12Open.devtoolsOpen,
+        f12Closed: f12Closed.devtoolsOpen,
+        executable: packagedExecutable ? "packaged" : "source",
       }),
     );
   } finally {

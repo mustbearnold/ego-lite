@@ -433,6 +433,7 @@ function managedTabState() {
     spaceName: managed.spaceName || null,
     private: Boolean(managed.private),
     muted: managed.view.webContents.isAudioMuted(),
+    devtoolsOpen: managed.view.webContents.isDevToolsOpened(),
     url: managed.view.webContents.getURL() || "about:blank",
     title: managed.view.webContents.getTitle() || "",
     tabGroup: managed.tabGroup || null,
@@ -793,17 +794,35 @@ async function targetIdForView(view) {
   }
 }
 
+function toggleDevTools(view) {
+  if (!view || view.webContents.isDestroyed()) return false;
+  if (view.webContents.isDevToolsOpened()) {
+    view.webContents.closeDevTools();
+  } else {
+    view.webContents.openDevTools({ mode: "detach" });
+  }
+  return true;
+}
+
 function installViewListeners(view) {
   for (const eventName of [
     "did-finish-load",
     "did-navigate",
     "did-navigate-in-page",
     "page-title-updated",
+    "devtools-opened",
+    "devtools-closed",
   ]) {
     view.webContents.on(eventName, publishBrowserState);
   }
   view.webContents.on("before-input-event", (event, input) => {
     if (input.type !== "keyDown" || input.isAutoRepeat) return;
+    const rawKey = String(input.key || "");
+    if (rawKey.toLowerCase() === "f12") {
+      event.preventDefault();
+      toggleDevTools(view);
+      return;
+    }
     if (input.alt || !(input.control || input.meta)) return;
     const key = String(input.key || "").toLowerCase();
     if (input.shift && key === "n") {
