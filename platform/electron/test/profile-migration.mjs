@@ -1,5 +1,5 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -148,6 +148,20 @@ async function stopBrowser(browser) {
   });
 }
 
+function sqliteQuery(database, sql) {
+  const result = spawnSync(
+    "sqlite3",
+    ["-separator", "|", database, sql],
+    { encoding: "utf8" },
+  );
+  if (result.error || result.status !== 0) {
+    throw new Error(
+      `sqlite3 password fixture failed: ${result.stderr || result.error?.message || result.status}`,
+    );
+  }
+  return result.stdout.trim();
+}
+
 async function runMigration() {
   const command = useElectronMigration ? electronPath : process.execPath;
   const args = useElectronMigration
@@ -274,6 +288,11 @@ try {
     await stopBrowser(reopenedSourceBrowser);
   }
 
+  sqliteQuery(
+    join(sourceProfile, "Login Data"),
+    "insert into logins (origin_url, action_url, username_element, username_value, password_element, password_value, submit_element, signon_realm, date_created, blacklisted_by_user, scheme, times_used, date_last_used, date_password_modified) values ('https://example.com/', 'https://example.com/login', 'user', 'fixture-user', 'pass', X'736563726574', 'submit', 'https://example.com/', 13200000000000000, 0, 0, 0, 0, 13200000000000000);",
+  );
+
   const report = await runMigration();
   const migratedBookmarks = await readFile(
     join(targetProfile, "Bookmarks"),
@@ -295,6 +314,16 @@ try {
     throw new Error(
       `migration did not import the fixture cookie: ${JSON.stringify(report)}`,
     );
+  }
+  if (!report.passwords.includes("basic")) {
+    throw new Error(`basic password store was not imported: ${JSON.stringify(report)}`);
+  }
+  const migratedPassword = sqliteQuery(
+    join(targetProfile, "Login Data"),
+    "select username_value || '|' || hex(password_value) from logins where username_value = 'fixture-user';",
+  );
+  if (migratedPassword !== "fixture-user|736563726574") {
+    throw new Error(`password fixture was not migrated: ${migratedPassword}`);
   }
 
   const targetBrowser = await startBrowser(targetUserData);

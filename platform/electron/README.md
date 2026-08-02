@@ -36,9 +36,9 @@ The RPM target requires `rpmbuild`: install `rpm-tools` on Arch-based systems or
 
 The package includes the Linux host, built SDK, and `ego-browser` skill under its resources. Sign in through the primary visible tab; each new task Space starts with a cookie snapshot from that session, then keeps its own persistent cookie jar. The packaged executable also accepts `--cli`, so a smoke check can use `ego-lite --cli --doctor` or run the SDK through `ego-lite --cli nodejs`. Linux artifacts are written to `platform/electron/dist/`.
 
-On the first packaged-app launch, when exactly one supported Chromium-family profile is found and the ego lite profile is still empty, a one-time migration prompt offers to copy portable browser data before the browser window opens. Set `EGO_LITE_SKIP_MIGRATION=1` for unattended launches; choosing to keep profiles separate records the decision in the target profile. Saved passwords remain excluded from migration.
+On the first packaged-app launch, when exactly one supported Chromium-family profile is found and the ego lite profile is still empty, a one-time migration prompt offers to copy portable browser data before the browser window opens. Set `EGO_LITE_SKIP_MIGRATION=1` for unattended launches; choosing to keep profiles separate records the decision in the target profile. Passwords from Chromium’s basic plaintext store are copied; keyring-backed passwords remain excluded.
 
-The toolbar’s Import button provides the repeatable Settings → Import data path. It opens a directory chooser for a Chromium-family user-data directory or profile, saves the request, restarts the app, performs the guarded migration before the new window opens, restores imported HTTP(S) tabs and groups, and backs up replaced target data. Close the source browser first; saved passwords remain excluded.
+The toolbar’s Import button provides the repeatable Settings → Import data path. It opens a directory chooser for a Chromium-family user-data directory or profile, saves the request, restarts the app, performs the guarded migration before the new window opens, restores imported HTTP(S) tabs and groups, and backs up replaced target data. Close the source browser first; basic-store passwords are copied while keyring-backed passwords remain excluded.
 
 Agent-created task tabs stay in the background by default, so creating or navigating a Space does not replace the user’s visible tab. Use the toolbar’s tab picker to inspect or reveal a Space explicitly.
 
@@ -66,7 +66,13 @@ The profile-migration probe verifies explicit Chrome-data migration, backup crea
 npm run test:profile-migration
 ```
 
-Migration also captures restorable HTTP(S) tabs and Chromium tab-group metadata through a temporary isolated MV3 probe. The Electron shell recreates those tabs in the primary browser picker and retains each group's title, color, and collapsed marker. Browser-internal pages and encrypted passwords remain excluded. The detached restoration and toolbar DOM probe is:
+The password-migration probe verifies that basic plaintext data is eligible while keyring-backed and encrypted stores are excluded:
+
+```bash
+npm run test:password-migration
+```
+
+Migration also captures restorable HTTP(S) tabs and Chromium tab-group metadata through a temporary isolated MV3 probe. The Electron shell recreates those tabs in the primary browser picker and retains each group's title, color, and collapsed marker. Browser-internal pages and keyring-backed passwords remain excluded. The detached restoration and toolbar DOM probe is:
 
 ```bash
 npm run test:migrated-tabs
@@ -114,6 +120,6 @@ The snapshot-contract probe covers action marks, stable role locators, result li
 npm run test:snapshot-contract
 ```
 
-The packaged CLI exposes the same migration command as the standalone host, for example `ego-lite --cli --migrate-profile --from "$HOME/.config/google-chrome"`. Close the source browser first; passwords are intentionally not imported.
+The packaged CLI exposes the same migration command as the standalone host, for example `ego-lite --cli --migrate-profile --from "$HOME/.config/google-chrome"`. Close the source browser first; only Chromium’s basic plaintext password store is imported.
 
 Do not run the Electron package and the standalone Linux host against the same profile at the same time. Set `EGO_LITE_PROFILE_DIR` to use a separate profile.

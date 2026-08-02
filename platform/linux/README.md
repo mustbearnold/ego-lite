@@ -46,7 +46,7 @@ The default profile is separate from an existing Chrome profile. To migrate port
 ego-lite --migrate-profile --from "$HOME/.config/google-chrome"
 ```
 
-`--from` accepts a Chromium/Chrome/Brave user-data directory or a specific profile directory such as `.../Default`. The migration backs up replaced ego lite data, copies bookmarks, settings, extensions, local storage, and related browser databases, transfers readable cookies through a temporary CDP session, and records restorable HTTP(S) tabs plus tab-group metadata in `ego-lite-migrated-tabs.json`. Passwords are not copied because Chrome's encrypted keyring is separate and must not be transplanted blindly. If `--from` is omitted, the host auto-detects a single supported Chromium-family profile.
+`--from` accepts a Chromium/Chrome/Brave user-data directory or a specific profile directory such as `.../Default`. The migration backs up replaced ego lite data, copies bookmarks, settings, extensions, local storage, related browser databases, and passwords from Chromium’s basic plaintext store, transfers readable cookies through a temporary CDP session, and records restorable HTTP(S) tabs plus tab-group metadata in `ego-lite-migrated-tabs.json`. Keyring-backed passwords are not copied because their encryption belongs to the source desktop keyring. If `--from` is omitted, the host auto-detects a single supported Chromium-family profile.
 
 The Electron package also exposes the same migration from its toolbar Import button. That path queues the selected source, restarts the package before copying profile data, and retains the target backup if existing files are replaced.
 

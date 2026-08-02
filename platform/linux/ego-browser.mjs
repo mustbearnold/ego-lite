@@ -55,6 +55,12 @@ const MIGRATABLE_PROFILE_FILES = [
   "Web Data",
   "Web Data-journal",
 ];
+const MIGRATABLE_PASSWORD_FILES = [
+  "Login Data",
+  "Login Data-journal",
+  "Login Data For Account",
+  "Login Data For Account-journal",
+];
 const MIGRATABLE_PROFILE_DIRECTORIES = [
   "Extensions",
   "Extension State",
@@ -134,10 +140,10 @@ Environment:
 
 Migration:
   --migrate-profile imports bookmarks, browser settings, extensions, local
-  storage, readable cookies, and restorable HTTP(S) tabs into the Linux
-  profile. Close the source browser first. Existing Linux profile data is
-  backed up before replacement; saved passwords are not copied across browser
-  keyrings.
+  storage, readable cookies, restorable HTTP(S) tabs, and basic-store saved
+  passwords into the Linux profile. Close the source browser first. Existing
+  Linux profile data is backed up before replacement; keyring-backed passwords
+  are kept separate.
 `;
 
 function fail(message) {
@@ -1474,10 +1480,48 @@ async function ensureProfileNotRunning(userDataDir, label) {
   }
 }
 
-async function copyMigrationData(sourceProfileDir, targetProfileDir) {
+async function inspectPasswordMigration(source) {
+  const loginDataPath = join(source.profileDir, "Login Data");
+  if (!(await pathExists(loginDataPath))) {
+    return { store: "none", importable: false };
+  }
+
+  let configuredStore = null;
+  try {
+    const localState = JSON.parse(
+      await readFile(join(source.userDataDir, "Local State"), "utf8"),
+    );
+    configuredStore = localState?.os_crypt?.scheme || null;
+  } catch {
+    // A missing Local State is common in disposable/basic profiles. The
+    // password database itself still provides the conservative signal below.
+  }
+  if (configuredStore && configuredStore !== "basic") {
+    return { store: configuredStore, importable: false };
+  }
+
+  const loginData = await readFile(loginDataPath);
+  const encryptedMarkers = ["v10", "v11"].some((marker) =>
+    loginData.includes(Buffer.from(marker)),
+  );
+  if (encryptedMarkers) {
+    return {
+      store: configuredStore || "encrypted",
+      importable: false,
+    };
+  }
+  return { store: configuredStore || "basic", importable: true };
+}
+
+async function copyMigrationData(
+  sourceProfileDir,
+  targetProfileDir,
+  { includePasswordFiles = false } = {},
+) {
   const names = [
     ...MIGRATABLE_PROFILE_FILES,
     ...MIGRATABLE_PROFILE_DIRECTORIES,
+    ...(includePasswordFiles ? MIGRATABLE_PASSWORD_FILES : []),
   ];
   const sourceEntries = [];
   for (const name of names) {
@@ -1909,8 +1953,11 @@ async function migrateProfile(sourcePath) {
   await ensureProfileNotRunning(targetUserDataDir, "ego lite");
 
   const executable = findExecutable(source.executableCandidates);
+  const passwordMigration = await inspectPasswordMigration(source);
   const migratedTabs = await captureMigrationTabs(source, executable);
-  const copied = await copyMigrationData(source.profileDir, targetProfileDir);
+  const copied = await copyMigrationData(source.profileDir, targetProfileDir, {
+    includePasswordFiles: passwordMigration.importable,
+  });
   const cookies = await exportMigrationCookies(source, executable);
   const imported = await importMigrationCookies(
     targetUserDataDir,
@@ -1934,7 +1981,11 @@ async function migrateProfile(sourcePath) {
       groups: migratedTabs.groups.length,
       manifest: migratedTabs.tabs.length ? MIGRATED_TABS_FILE : null,
     },
-    passwords: "not imported; encrypted browser keyrings are kept separate",
+    passwords: passwordMigration.importable
+      ? "copied from Chromium's basic plaintext password store"
+      : passwordMigration.store === "none"
+        ? "none found"
+        : "not imported; encrypted browser keyrings are kept separate",
   };
 }
 
@@ -2199,7 +2250,11 @@ function isDirectExecution() {
   }
 }
 
-export { nodesWithinViewport, renderAccessibilityTree };
+export {
+  inspectPasswordMigration,
+  nodesWithinViewport,
+  renderAccessibilityTree,
+};
 
 if (isDirectExecution()) {
   try {

@@ -953,7 +953,7 @@ async function runPendingProfileImport() {
       title: "Browser data import did not finish",
       message: "ego lite will start with the existing Linux profile.",
       detail:
-        "Close the source browser and use Import data again to retry. Saved passwords are not copied.",
+        "Close the source browser and use Import data again to retry. Passwords from Chromium's basic plaintext store can be imported; keyring-backed passwords remain separate.",
       buttons: ["Continue"],
     });
   }
@@ -1030,7 +1030,7 @@ async function maybeOfferPackagedMigration() {
       title: "Bring your browser setup to ego lite?",
       message: `A ${source.name} profile is available for migration.`,
       detail:
-        "Migrate bookmarks, settings, extensions, storage, and readable cookies into ego lite. Saved passwords are not copied. Close the source browser before continuing.",
+        "Migrate bookmarks, settings, extensions, storage, readable cookies, and basic-store passwords into ego lite. Keyring-backed passwords remain separate. Close the source browser before continuing.",
       buttons: ["Migrate now", "Keep separate"],
       defaultId: 0,
       cancelId: 1,
