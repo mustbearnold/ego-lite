@@ -296,6 +296,31 @@ try {
       );
     }
 
+    const historyFeatures = await waitFor("history toolbar", async () => {
+      const value = await evaluate(
+        connection,
+        attached.sessionId,
+        "(() => ({visible: !document.querySelector('#history-menu').hidden, urls: [...document.querySelectorAll('#history-list button[data-history-url]')].map((node) => node.dataset.historyUrl), clear: [...document.querySelectorAll('#history-list button')].some((node) => node.textContent === 'Clear history')}))()",
+      );
+      return value?.urls?.some((url) => url.endsWith("/set")) ? value : null;
+    });
+    if (!historyFeatures.clear) {
+      throw new Error("history toolbar is missing Clear history");
+    }
+    await evaluate(
+      connection,
+      attached.sessionId,
+      "[...document.querySelectorAll('#history-list button')].find((node) => node.textContent === 'Clear history').click(); true",
+    );
+    await waitFor("history clear", async () => {
+      const value = await evaluate(
+        connection,
+        attached.sessionId,
+        "document.querySelector('#history-menu').hidden",
+      );
+      return value === true ? value : null;
+    });
+
     await evaluate(
       connection,
       attached.sessionId,
@@ -362,6 +387,7 @@ try {
         privateCookie: privateCookie.cookies,
         toolbarFeatures,
         downloadFeatures,
+        historyFeatures,
         persistentOnly: persistentOnly.map((tab) => ({
           private: tab.private,
           url: tab.url,

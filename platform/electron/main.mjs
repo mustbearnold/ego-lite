@@ -27,6 +27,11 @@ import {
 } from "./migration-discovery.mjs";
 import { readBookmarks } from "./bookmarks.mjs";
 import { openDownloadPath } from "./downloads.mjs";
+import {
+  historyDocument,
+  readHistoryDocument,
+  recordHistory,
+} from "./history.mjs";
 import { createUpdateController } from "./update.mjs";
 
 const MAIN_DIR = dirname(fileURLToPath(import.meta.url));
@@ -158,9 +163,11 @@ const PENDING_IMPORT_FILE = "ego-lite-pending-import.json";
 const PENDING_IMPORT_PATH = join(PROFILE_DIR, PENDING_IMPORT_FILE);
 const SPACE_SESSION_FILE = "ego-lite-space-session.json";
 const SPACE_SESSION_PATH = join(PROFILE_DIR, SPACE_SESSION_FILE);
+const HISTORY_PATH = join(PROFILE_DIR, "ego-lite-history.json");
 let sessionSaveTimer;
 let spaceSaveTimer;
 let importRequestPending = false;
+let historyEntries = [];
 
 const permissionAliases = {
   clipboardReadWrite: ["clipboard-read", "clipboard-sanitized-write"],
@@ -185,6 +192,46 @@ function normalizeUrl(value) {
     throw new Error(`unsupported browser URL scheme: ${url.protocol}`);
   }
   return url.toString();
+}
+
+function readHistory() {
+  try {
+    return readHistoryDocument(JSON.parse(readFileSync(HISTORY_PATH, "utf8")));
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      console.warn(
+        `[ego-lite] could not read history: ${error?.message || String(error)}`,
+      );
+    }
+    return [];
+  }
+}
+
+function writeHistory() {
+  const temporaryPath = `${HISTORY_PATH}.${process.pid}.tmp`;
+  writeFileSync(temporaryPath, `${JSON.stringify(historyDocument(historyEntries), null, 2)}\n`);
+  renameSync(temporaryPath, HISTORY_PATH);
+}
+
+function currentHistory() {
+  return historyEntries.map((entry) => ({ ...entry }));
+}
+
+function recordViewHistory(view) {
+  const managed = [...managedViews.values()].find(
+    (candidate) => candidate.view === view,
+  );
+  if (!managed || managed.private) return;
+  const url = view.webContents.getURL();
+  const next = recordHistory(historyEntries, {
+    url,
+    title: view.webContents.getTitle(),
+    visitedAt: new Date().toISOString(),
+  });
+  if (JSON.stringify(next) === JSON.stringify(historyEntries)) return;
+  historyEntries = next;
+  writeHistory();
+  publishBrowserState();
 }
 
 function boundedWindowDimension(value, minimum, fallback) {
@@ -580,6 +627,7 @@ function currentBrowserState() {
     agentTaskState,
     controlState: currentControlState(),
     bookmarks,
+    history: currentHistory(),
     downloads: currentDownloads(),
     extensions: currentExtensions(),
     taskSpaces: currentTaskSpaces(),
@@ -825,6 +873,13 @@ function installViewListeners(view) {
       finalUpdate: Boolean(result?.finalUpdate),
     });
   });
+  for (const eventName of [
+    "did-navigate",
+    "did-navigate-in-page",
+    "page-title-updated",
+  ]) {
+    view.webContents.on(eventName, () => recordViewHistory(view));
+  }
   view.webContents.on("before-input-event", (event, input) => {
     if (input.type !== "keyDown" || input.isAutoRepeat) return;
     const rawKey = String(input.key || "");
@@ -1790,6 +1845,7 @@ async function createPrimaryBrowserView({
 
 async function createWindow() {
   bookmarks = readBookmarks(join(PROFILE_DIR, "Default", "Bookmarks"));
+  historyEntries = readHistory();
   const migrated = await readMigratedTabsManifest();
   const persisted = migrated ? null : await readPrimarySessionManifest();
   const persistedSpaces = await readSpaceSessionManifest();
@@ -2200,6 +2256,12 @@ ipcMain.handle("ego-lite:show-download", (_event, id) => {
 ipcMain.handle("ego-lite:open-download", async (_event, id) => {
   const download = downloadStates.get(String(id));
   return openDownloadPath(download?.path, (path) => shell.openPath(path));
+});
+ipcMain.handle("ego-lite:clear-history", () => {
+  historyEntries = [];
+  writeHistory();
+  publishBrowserState();
+  return currentBrowserState();
 });
 ipcMain.handle("ego-lite:set-extension", (_event, value) =>
   setExtensionEnabled(value || {}),

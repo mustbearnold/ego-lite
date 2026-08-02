@@ -93,6 +93,10 @@
         position: relative;
       }
 
+      #history-menu {
+        position: relative;
+      }
+
       #bookmark-menu summary {
         background: #1f2937;
         border: 1px solid #4b5563;
@@ -107,6 +111,23 @@
       }
 
       #bookmark-menu summary::-webkit-details-marker {
+        display: none;
+      }
+
+      #history-menu summary {
+        background: #1f2937;
+        border: 1px solid #4b5563;
+        border-radius: 6px;
+        color: #e5e7eb;
+        cursor: pointer;
+        font-size: 13px;
+        height: 34px;
+        list-style: none;
+        padding: 8px 10px;
+        white-space: nowrap;
+      }
+
+      #history-menu summary::-webkit-details-marker {
         display: none;
       }
 
@@ -224,6 +245,31 @@
       }
 
       #bookmark-list button {
+        font-size: 12px;
+        overflow: hidden;
+        text-align: left;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        width: 100%;
+      }
+
+      #history-list {
+        background: #1f2937;
+        border: 1px solid #4b5563;
+        border-radius: 6px;
+        display: grid;
+        gap: 4px;
+        min-width: 320px;
+        max-height: min(520px, calc(100vh - 72px));
+        overflow: auto;
+        padding: 6px;
+        position: absolute;
+        right: 0;
+        top: 40px;
+        z-index: 10;
+      }
+
+      #history-list button {
         font-size: 12px;
         overflow: hidden;
         text-align: left;
@@ -523,6 +569,10 @@
         <summary>Bookmarks</summary>
         <div id="bookmark-list" role="menu"></div>
       </details>
+      <details id="history-menu" hidden>
+        <summary>History</summary>
+        <div id="history-list" role="menu"></div>
+      </details>
       <details id="extension-menu" hidden>
         <summary>Extensions</summary>
         <div id="extension-list" role="menu"></div>
@@ -565,6 +615,8 @@
       const profileList = document.querySelector("#profile-list");
       const bookmarkMenu = document.querySelector("#bookmark-menu");
       const bookmarkList = document.querySelector("#bookmark-list");
+      const historyMenu = document.querySelector("#history-menu");
+      const historyList = document.querySelector("#history-list");
       const extensionMenu = document.querySelector("#extension-menu");
       const extensionList = document.querySelector("#extension-list");
       const downloadMenu = document.querySelector("#download-menu");
@@ -656,6 +708,43 @@
             }
           });
           bookmarkList.append(button);
+        }
+      }
+
+      function applyHistory(history = []) {
+        historyList.replaceChildren();
+        historyMenu.hidden = history.length === 0;
+        for (const entry of history) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.dataset.historyUrl = entry.url;
+          button.setAttribute("aria-label", `Open history entry: ${entry.title || entry.url}`);
+          button.title = entry.url;
+          button.textContent = entry.title || entry.url;
+          button.addEventListener("click", async () => {
+            try {
+              await window.egoLite.navigate(entry.url);
+              historyMenu.open = false;
+            } catch (error) {
+              status.textContent = error.message;
+            }
+          });
+          historyList.append(button);
+        }
+        if (history.length > 0) {
+          const clear = document.createElement("button");
+          clear.type = "button";
+          clear.textContent = "Clear history";
+          clear.setAttribute("aria-label", "Clear browsing history");
+          clear.addEventListener("click", async () => {
+            try {
+              applyState(await window.egoLite.clearHistory());
+              historyMenu.open = false;
+            } catch (error) {
+              status.textContent = error.message;
+            }
+          });
+          historyList.append(clear);
         }
       }
 
@@ -918,6 +1007,7 @@
         forward.disabled = !state.canGoForward;
         applyProfiles(state.profiles, state.profileId);
         applyBookmarks(state.bookmarks);
+        applyHistory(state.history);
         applyExtensions(state.extensions);
         applyDownloads(state.downloads);
         applySpaces(state.taskSpaces);

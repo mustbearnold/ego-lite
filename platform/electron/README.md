@@ -62,6 +62,8 @@ npm run test:fullscreen
 
 User downloads appear in the toolbar’s Downloads menu with progress, an Open action that uses the Linux desktop default application, and a Show action. Primary-tab downloads use `EGO_LITE_DOWNLOAD_DIR` when set, otherwise the normal `~/Downloads` directory; task-Space downloads retain the SDK/CDP-selected download path.
 
+The History menu keeps the last 100 HTTP(S) visits for the active profile, excludes private tabs, opens entries in the active tab, and provides Clear history. Its persistence and toolbar behavior are covered by `npm run test:history` and the detached private-tab/download probe.
+
 The native window restores its last usable position and size, keeps the normal bounds behind a maximized session, and restores maximized state on the next launch. The detached X11/Xvfb probe covers seed, resize, quit, and restart restoration:
 
 ```bash
