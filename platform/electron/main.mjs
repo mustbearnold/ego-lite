@@ -61,15 +61,44 @@ function validProfileId(value) {
     : "default";
 }
 
+const SERVER_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]{0,39}$/;
+
+function normalizeServerName(value, { strict = false } = {}) {
+  const candidate = String(value || "").trim().toLowerCase();
+  if (!candidate) return "default";
+  if (SERVER_NAME_PATTERN.test(candidate)) return candidate;
+  if (strict) {
+    throw new Error(
+      "server name must start with a letter or number and contain only letters, numbers, hyphens, or underscores",
+    );
+  }
+  return "default";
+}
+
+function serverDataRoot(baseRoot, serverName) {
+  const normalized = normalizeServerName(serverName);
+  return normalized === "default"
+    ? baseRoot
+    : join(baseRoot, "servers", normalized);
+}
+
 const ACTIVE_PROFILE_ID = validProfileId(
   argumentValue("--profile") || process.env.EGO_LITE_PROFILE_ID || "default",
 );
+const requestedServerName =
+  argumentValue("--server-name") || process.env.EGO_LITE_SERVER_NAME || "";
+const SERVER_NAME = normalizeServerName(requestedServerName, {
+  strict: Boolean(requestedServerName),
+});
 const PROFILE_STORAGE_ROOT = resolve(
-  process.env.EGO_LITE_PROFILE_ROOT ||
-    join(
-      process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"),
-      "ego-lite",
-    ),
+  serverDataRoot(
+    process.env.EGO_LITE_PROFILE_ROOT ||
+      join(
+        process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"),
+        "ego-lite",
+      ),
+    SERVER_NAME,
+  ),
 );
 const PROFILE_REGISTRY_PATH = join(PROFILE_STORAGE_ROOT, "profiles.json");
 const PROFILE_MANAGER_ENABLED =
@@ -87,19 +116,18 @@ const PROFILE_DIR = resolve(
 );
 const STATE_PATH = resolve(
   process.env.EGO_LITE_STATE_PATH ||
-    (ACTIVE_PROFILE_ID === "default"
-      ? join(
+    join(
+      serverDataRoot(
+        join(
           process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"),
           "ego-lite",
-          "task-spaces.json",
-        )
-      : join(
-          process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"),
-          "ego-lite",
-          "profiles",
-          ACTIVE_PROFILE_ID,
-          "task-spaces.json",
-        )),
+        ),
+        SERVER_NAME,
+      ),
+      ...(ACTIVE_PROFILE_ID === "default"
+        ? ["task-spaces.json"]
+        : ["profiles", ACTIVE_PROFILE_ID, "task-spaces.json"]),
+    ),
 );
 const WINDOW_STATE_PATH = resolve(
   process.env.EGO_LITE_WINDOW_STATE_PATH ||
@@ -701,6 +729,7 @@ function currentBrowserState() {
     title: browserView?.webContents.getTitle() || "ego lite",
     url: browserView?.webContents.getURL() || "about:blank",
     profileId: ACTIVE_PROFILE_ID,
+    serverName: SERVER_NAME,
     fullscreen: Boolean(mainWindow?.isFullScreen()),
     profiles: currentProfiles(),
     agentTaskState,
@@ -1717,7 +1746,13 @@ async function startBridge() {
   const address = bridgeServer.address();
   await writeFile(
     bridgeFile,
-    `${JSON.stringify({ port: address.port, token: bridgeToken, pid: process.pid })}\n`,
+    `${JSON.stringify({
+      port: address.port,
+      token: bridgeToken,
+      pid: process.pid,
+      profileId: ACTIVE_PROFILE_ID,
+      serverName: SERVER_NAME,
+    })}\n`,
   );
   if (!browserStateSyncTimer) {
     browserStateSyncTimer = setInterval(() => {

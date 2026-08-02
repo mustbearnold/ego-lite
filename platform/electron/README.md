@@ -44,6 +44,8 @@ The toolbar’s Import button provides the repeatable Settings → Import data p
 
 The Profile menu keeps the existing default profile at `~/.local/share/ego-lite/chromium-profile`, stores additional profiles under `~/.local/share/ego-lite/profiles/`, and restarts into the selected profile. Each profile has independent browser data, task-space state, extensions, tabs, and window state; new profiles start empty and can use Import data later.
 
+Use `--server-name NAME` or `EGO_LITE_SERVER_NAME` when more than one browser instance needs to run at once. Named instances use an isolated `servers/NAME` data, state, and bridge namespace; the default instance keeps the existing paths for backwards compatibility. Pass the same name to the packaged CLI to reconnect to the matching instance.
+
 Agent-created task tabs stay in the background by default, so creating or navigating a Space does not replace the user’s visible tab. Use the toolbar’s tab picker to inspect or reveal a Space explicitly.
 
 The toolbar exposes bookmarks imported into the Electron profile and a Private tab action. Private tabs use an in-memory Chromium partition, do not inherit the primary tab’s cookies, and are not written to the primary session manifest. `Ctrl/Cmd+Shift+N` opens one from the toolbar or a focused page; `Ctrl/Cmd+T` and `Ctrl/Cmd+W` continue to create and close ordinary tabs.
@@ -79,6 +81,12 @@ npm run test:last-tab
 ```
 
 The Spaces menu lists active agent workspaces, shows each Space’s live task status, and exposes Take over/Return control plus Stop actions; stopping a Space closes its task tabs and removes its persisted task state.
+
+The named-instance CLI probe verifies that a server name selects an isolated profile, state, and bridge namespace for both the source and packaged executables:
+
+```bash
+npm run test:server-name
+```
 
 The Electron toolbar also provides New tab and Close tab controls, with Ctrl/Cmd+T and Ctrl/Cmd+W shortcuts from either the toolbar or the focused page; closing the final primary tab closes the native window.
 

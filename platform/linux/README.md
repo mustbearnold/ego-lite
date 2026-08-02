@@ -4,6 +4,8 @@ This directory contains the open Linux host for the `ego-browser` SDK. It launch
 
 The host is dependency-free beyond Node.js 22+. It uses Chromium browser contexts for task spaces, copies current browser cookies into a new agent context when possible, and persists task-space metadata under `~/.local/state/ego-lite/task-spaces.json`.
 
+Pass `--server-name NAME` or set `EGO_LITE_SERVER_NAME` to run or reconnect to a named browser instance. Named instances use matching `servers/NAME` namespaces under the XDG data and state roots, which lets multiple profiles and agents run without sharing CDP endpoint files.
+
 ## Install
 
 From the repository root:

@@ -18,20 +18,37 @@ import { spawn, spawnSync } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  DEFAULT_SERVER_NAME,
+  normalizeServerName,
+  serverDataRoot,
+} from "./server-name.mjs";
 
 const HOST_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_DIR = resolve(HOST_DIR, "../..");
 const INSTALL_DIR = resolve(HOST_DIR, "..");
-const DEFAULT_PROFILE_DIR = join(
+const DEFAULT_PROFILE_ROOT = join(
   process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"),
   "ego-lite",
-  "chromium-profile",
 );
-const DEFAULT_STATE_PATH = join(
+const DEFAULT_STATE_ROOT = join(
   process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"),
   "ego-lite",
-  "task-spaces.json",
 );
+
+function defaultProfileDir(serverName) {
+  return join(
+    serverDataRoot(DEFAULT_PROFILE_ROOT, serverName),
+    "chromium-profile",
+  );
+}
+
+function defaultStatePath(serverName) {
+  return join(
+    serverDataRoot(DEFAULT_STATE_ROOT, serverName),
+    "task-spaces.json",
+  );
+}
 const MIGRATED_TABS_FILE = "ego-lite-migrated-tabs.json";
 const HOST_VERSION = "linux-host/0.4.0";
 const nativeFetch = globalThis.fetch?.bind(globalThis);
@@ -130,11 +147,13 @@ Commands:
   ego-browser --launch
   ego-browser --reload
   ego-browser upgrade
+  ego-browser --server-name NAME
   ego-browser --migrate-profile [--from PATH]
   ego-browser nodejs [--sdk-path PATH]
 
 Environment:
   EGO_BROWSER_EXECUTABLE       Chromium/Chrome executable to launch
+  EGO_LITE_SERVER_NAME         Named browser instance (default: default)
   EGO_LITE_PROFILE_DIR         Persistent browser profile directory
   EGO_LITE_HEADLESS=1          Run Chromium headlessly (useful in CI)
   EGO_BROWSER_AGENT_WORKSPACE  Skill workspace used by the SDK
@@ -1992,10 +2011,10 @@ async function importMigrationCookies(targetUserDataDir, cookies, executable) {
   return { imported, failed };
 }
 
-async function migrateProfile(sourcePath) {
+async function migrateProfile(sourcePath, serverName = DEFAULT_SERVER_NAME) {
   const source = await resolveMigrationSource(sourcePath);
   const targetUserDataDir = resolve(
-    process.env.EGO_LITE_PROFILE_DIR || DEFAULT_PROFILE_DIR,
+    process.env.EGO_LITE_PROFILE_DIR || defaultProfileDir(serverName),
   );
   const targetProfileDir = join(targetUserDataDir, "Default");
   if (
@@ -2125,8 +2144,9 @@ async function launchChromium(profileDir) {
   fail(`Chromium started but did not expose CDP in time. See ${logPath}`);
 }
 
-async function connectToChromium() {
-  const profileDir = process.env.EGO_LITE_PROFILE_DIR || DEFAULT_PROFILE_DIR;
+async function connectToChromium(serverName = DEFAULT_SERVER_NAME) {
+  const profileDir =
+    process.env.EGO_LITE_PROFILE_DIR || defaultProfileDir(serverName);
   let endpoint = await readDevToolsEndpoint(profileDir);
   let connection;
   if (endpoint) {
@@ -2142,7 +2162,8 @@ async function connectToChromium() {
     endpoint = await launchChromium(profileDir);
     connection = await new BrowserConnection(endpoint.url).connect();
   }
-  const statePath = process.env.EGO_LITE_STATE_PATH || DEFAULT_STATE_PATH;
+  const statePath =
+    process.env.EGO_LITE_STATE_PATH || defaultStatePath(serverName);
   const version = await connection
     .request("Browser.getVersion")
     .catch(() => ({}));
@@ -2191,12 +2212,21 @@ function parseArgs(argv) {
   let sdkPath;
   let migrateFrom;
   let command = "run";
+  let serverName = normalizeServerName(process.env.EGO_LITE_SERVER_NAME);
   if (args[0] === "nodejs") args.shift();
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--sdk-path") {
       sdkPath = args[++index];
       if (!sdkPath) fail("--sdk-path requires a path");
+    } else if (arg === "--server-name") {
+      const value = args[++index];
+      if (!value) fail("--server-name requires a name");
+      serverName = normalizeServerName(value, { strict: true });
+    } else if (arg.startsWith("--server-name=")) {
+      serverName = normalizeServerName(arg.slice("--server-name=".length), {
+        strict: true,
+      });
     } else if (arg === "--doctor") {
       command = "doctor";
     } else if (arg === "--launch") {
@@ -2216,17 +2246,18 @@ function parseArgs(argv) {
       fail(`unknown argument: ${arg}`);
     }
   }
-  return { command, sdkPath, migrateFrom };
+  return { command, sdkPath, migrateFrom, serverName };
 }
 
 export async function runHost(argv = process.argv.slice(2)) {
-  const { command, sdkPath, migrateFrom } = parseArgs(argv);
+  const { command, sdkPath, migrateFrom, serverName } = parseArgs(argv);
   if (command === "help") {
     process.stdout.write(HELP);
     return 0;
   }
   if (command === "reload") {
-    const profileDir = process.env.EGO_LITE_PROFILE_DIR || DEFAULT_PROFILE_DIR;
+    const profileDir =
+      process.env.EGO_LITE_PROFILE_DIR || defaultProfileDir(serverName);
     const endpoint = await readDevToolsEndpoint(profileDir);
     if (endpoint && (await canConnect(endpoint))) {
       process.stdout.write(
@@ -2246,17 +2277,18 @@ export async function runHost(argv = process.argv.slice(2)) {
     return 0;
   }
   if (command === "migrate-profile") {
-    const report = await migrateProfile(migrateFrom);
+    const report = await migrateProfile(migrateFrom, serverName);
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     return 0;
   }
-  const host = await connectToChromium();
+  const host = await connectToChromium(serverName);
   if (command === "doctor") {
     const tabs = await host.listTabs();
     process.stdout.write(
       `${JSON.stringify(
         {
           platform: "linux",
+          serverName,
           browser: host.browserVersion,
           taskSpaceMode: host.taskSpaceMode,
           executable:

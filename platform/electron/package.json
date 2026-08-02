@@ -41,6 +41,7 @@
     "test:profile-cli": "xvfb-run --auto-servernum node test/profile-cli.mjs",
     "test:profiles": "xvfb-run --auto-servernum node test/profile-controls.mjs",
     "test:session-restore": "xvfb-run --auto-servernum node test/session-restore.mjs",
+    "test:server-name": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/server-name.mjs",
     "test:profile-migration": "node test/profile-migration.mjs",
     "test:profile-migration:electron": "xvfb-run --auto-servernum env EGO_LITE_ELECTRON_MIGRATION=1 node test/profile-migration.mjs",
     "test:snapshot-contract": "node test/snapshot-contract.mjs",
@@ -79,6 +80,10 @@
       {
         "from": "../linux/ego-browser.mjs",
         "to": "ego-lite/linux/ego-browser.mjs"
+      },
+      {
+        "from": "../linux/server-name.mjs",
+        "to": "ego-lite/linux/server-name.mjs"
       },
       {
         "from": "../../package/ego-browser/dist/out",
