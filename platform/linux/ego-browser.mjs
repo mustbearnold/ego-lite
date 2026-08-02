@@ -77,6 +77,8 @@ function defaultStatePath(serverName, profileId = DEFAULT_PROFILE_ID) {
 const MIGRATED_TABS_FILE = "ego-lite-migrated-tabs.json";
 const HOST_VERSION = "linux-host/0.4.0";
 const nativeFetch = globalThis.fetch?.bind(globalThis);
+const MIGRATION_CDP_TIMEOUT_MS = 10_000;
+const MIGRATION_COOKIE_BATCH_SIZE = 100;
 const DEFAULT_EXECUTABLES = [
   "chromium",
   "chromium-browser",
@@ -328,6 +330,32 @@ class BrowserConnection {
     } catch {
       // The browser is intentionally left running for the next heredoc.
     }
+  }
+}
+
+async function migrationRequest(
+  connection,
+  method,
+  params = {},
+  sessionId = undefined,
+  timeoutMs = MIGRATION_CDP_TIMEOUT_MS,
+) {
+  let timer;
+  try {
+    return await Promise.race([
+      connection.request(method, params, sessionId),
+      new Promise((_, rejectPromise) => {
+        timer = setTimeout(() => {
+          const error = new Error(
+            `migration CDP request timed out: ${method}`,
+          );
+          error.code = "ERR_MIGRATION_CDP_TIMEOUT";
+          rejectPromise(error);
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -1933,19 +1961,22 @@ async function createMigrationProbeExtension() {
 async function attachMigrationExtension(connection) {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
-    const targets = await connection.request("Target.getTargets");
+    const targets = await migrationRequest(connection, "Target.getTargets");
     const worker = (targets.targetInfos || []).find(
       (target) =>
         target.type === "service_worker" &&
         target.url.startsWith("chrome-extension://"),
     );
     if (worker) {
-      const result = await connection.request("Target.attachToTarget", {
-        targetId: worker.targetId,
-        flatten: true,
-      });
-      await connection
-        .request("Runtime.enable", {}, result.sessionId)
+      const result = await migrationRequest(
+        connection,
+        "Target.attachToTarget",
+        {
+          targetId: worker.targetId,
+          flatten: true,
+        },
+      );
+      await migrationRequest(connection, "Runtime.enable", {}, result.sessionId)
         .catch(() => {});
       return result.sessionId;
     }
@@ -1955,23 +1986,17 @@ async function attachMigrationExtension(connection) {
 }
 
 async function evaluateMigrationExtension(connection, sessionId, expression) {
-  const result = await Promise.race([
-    connection.request(
-      "Runtime.evaluate",
-      {
-        expression,
-        awaitPromise: true,
-        returnByValue: true,
-      },
-      sessionId,
-    ),
-    new Promise((_, rejectPromise) =>
-      setTimeout(
-        () => rejectPromise(new Error("migration probe evaluation timed out")),
-        5000,
-      ),
-    ),
-  ]);
+  const result = await migrationRequest(
+    connection,
+    "Runtime.evaluate",
+    {
+      expression,
+      awaitPromise: true,
+      returnByValue: true,
+    },
+    sessionId,
+    5000,
+  );
   if (result.exceptionDetails) {
     fail(
       result.exceptionDetails.text ||
@@ -2078,17 +2103,17 @@ async function writeMigratedTabsManifest(targetUserDataDir, manifest) {
 }
 
 async function attachMigrationTarget(connection) {
-  const targets = await connection.request("Target.getTargets");
+  const targets = await migrationRequest(connection, "Target.getTargets");
   let target = (targets.targetInfos || []).find(
     (candidate) => candidate.type === "page",
   );
   if (!target) {
-    const created = await connection.request("Target.createTarget", {
+    const created = await migrationRequest(connection, "Target.createTarget", {
       url: "about:blank",
     });
     target = { targetId: created.targetId };
   }
-  const attached = await connection.request("Target.attachToTarget", {
+  const attached = await migrationRequest(connection, "Target.attachToTarget", {
     targetId: target.targetId,
     flatten: true,
   });
@@ -2128,6 +2153,37 @@ function migrationCookieParams(cookies) {
   });
 }
 
+async function importMigrationCookieBatch(connection, sessionId, cookies) {
+  try {
+    await migrationRequest(
+      connection,
+      "Network.setCookies",
+      { cookies },
+      sessionId,
+    );
+    return { imported: cookies.length, failed: 0 };
+  } catch (error) {
+    if (error?.code === "ERR_MIGRATION_CDP_TIMEOUT" || cookies.length === 1) {
+      return { imported: 0, failed: cookies.length };
+    }
+    const midpoint = Math.ceil(cookies.length / 2);
+    const left = await importMigrationCookieBatch(
+      connection,
+      sessionId,
+      cookies.slice(0, midpoint),
+    );
+    const right = await importMigrationCookieBatch(
+      connection,
+      sessionId,
+      cookies.slice(midpoint),
+    );
+    return {
+      imported: left.imported + right.imported,
+      failed: left.failed + right.failed,
+    };
+  }
+}
+
 async function exportMigrationCookies(source, executable) {
   const browser = await launchMigrationBrowser({
     executable,
@@ -2136,7 +2192,8 @@ async function exportMigrationCookies(source, executable) {
   });
   try {
     const sessionId = await attachMigrationTarget(browser.connection);
-    const result = await browser.connection.request(
+    const result = await migrationRequest(
+      browser.connection,
       "Network.getAllCookies",
       {},
       sessionId,
@@ -2159,17 +2216,18 @@ async function importMigrationCookies(targetUserDataDir, cookies, executable) {
   let failed = 0;
   try {
     const sessionId = await attachMigrationTarget(browser.connection);
-    for (const cookie of cookies) {
-      try {
-        await browser.connection.request(
-          "Network.setCookies",
-          { cookies: [cookie] },
-          sessionId,
-        );
-        imported += 1;
-      } catch {
-        failed += 1;
-      }
+    for (
+      let offset = 0;
+      offset < cookies.length;
+      offset += MIGRATION_COOKIE_BATCH_SIZE
+    ) {
+      const result = await importMigrationCookieBatch(
+        browser.connection,
+        sessionId,
+        cookies.slice(offset, offset + MIGRATION_COOKIE_BATCH_SIZE),
+      );
+      imported += result.imported;
+      failed += result.failed;
     }
   } finally {
     await stopMigrationBrowser(browser);

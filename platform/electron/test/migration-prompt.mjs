@@ -7,7 +7,7 @@ const testDir = import.meta.dirname;
 const repoDir = resolve(testDir, "../../..");
 const electronPath = resolve(testDir, "../node_modules/.bin/electron");
 const root = await mkdtemp(join(tmpdir(), "ego-electron-migration-prompt-"));
-const profileDir = join(root, "ego-profile");
+const profileDir = join(root, "chromium-profile");
 const sourceProfile = join(root, "config", "google-chrome", "Default");
 const selectedProfile = join(root, "config", "google-chrome", "Profile 1");
 const markerPath = join(profileDir, ".migration-prompted");
@@ -16,7 +16,7 @@ const multiProfile = process.env.EGO_LITE_TEST_MULTI_PROFILE === "1";
 const expectedSource = multiProfile ? selectedProfile : sourceProfile;
 const environment = {
   ...process.env,
-  EGO_LITE_PROFILE_DIR: profileDir,
+  EGO_LITE_PROFILE_ROOT: root,
   EGO_LITE_STATE_PATH: join(root, "state", "task-spaces.json"),
   EGO_LITE_DISABLE_GPU: "1",
   EGO_LITE_MIGRATION_PROMPT: "1",

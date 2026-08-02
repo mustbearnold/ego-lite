@@ -233,6 +233,13 @@ try {
   );
   await writeFile(join(targetProfile, "Bookmarks"), '{"old":true}\n');
 
+  const migrationCookies = Array.from({ length: 150 }, (_, index) => ({
+    url: `https://cookie-${index}.example.com/`,
+    name: `ego_migration_fixture_${index}`,
+    value: `imported-${index}`,
+    expires: Math.floor(Date.now() / 1000) + 3600,
+  }));
+
   const sourceBrowser = await startBrowser(sourceUserData);
   try {
     const sessionId = await attachPage(sourceBrowser.connection);
@@ -240,14 +247,7 @@ try {
     await sourceBrowser.connection.request(
       "Network.setCookies",
       {
-        cookies: [
-          {
-            url: "https://example.com/",
-            name: "ego_migration_fixture",
-            value: "imported",
-            expires: Math.floor(Date.now() / 1000) + 3600,
-          },
-        ],
+        cookies: migrationCookies,
       },
       sessionId,
     );
@@ -258,7 +258,10 @@ try {
     );
     if (
       !cookies.cookies?.some(
-        (cookie) => cookie.name === "ego_migration_fixture",
+        (cookie) => cookie.name === "ego_migration_fixture_0",
+      ) ||
+      !cookies.cookies?.some(
+        (cookie) => cookie.name === "ego_migration_fixture_149",
       )
     ) {
       throw new Error(`source cookie was not set: ${JSON.stringify(cookies)}`);
@@ -277,7 +280,10 @@ try {
     );
     if (
       !cookies.cookies?.some(
-        (cookie) => cookie.name === "ego_migration_fixture",
+        (cookie) => cookie.name === "ego_migration_fixture_0",
+      ) ||
+      !cookies.cookies?.some(
+        (cookie) => cookie.name === "ego_migration_fixture_149",
       )
     ) {
       throw new Error(
@@ -310,7 +316,7 @@ try {
   if (backupBookmarks !== '{"old":true}\n') {
     throw new Error("existing target data was not backed up");
   }
-  if (report.cookies.imported < 1) {
+  if (report.cookies.imported < migrationCookies.length) {
     throw new Error(
       `migration did not import the fixture cookie: ${JSON.stringify(report)}`,
     );
@@ -334,10 +340,15 @@ try {
       {},
       sessionId,
     );
-    const imported = cookies.cookies?.find(
-      (cookie) => cookie.name === "ego_migration_fixture",
+    const imported = new Map(
+      cookies.cookies
+        ?.filter((cookie) => cookie.name.startsWith("ego_migration_fixture_"))
+        .map((cookie) => [cookie.name, cookie.value]),
     );
-    if (imported?.value !== "imported") {
+    if (
+      imported.get("ego_migration_fixture_0") !== "imported-0" ||
+      imported.get("ego_migration_fixture_149") !== "imported-149"
+    ) {
       throw new Error(
         `target cookie was not readable: ${JSON.stringify(cookies)}`,
       );
