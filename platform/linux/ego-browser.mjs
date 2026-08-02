@@ -859,7 +859,9 @@ class LinuxEgoHost {
 
   setAgentTaskState(label) {
     if (!this.electronBridge) return;
-    void this.electronBridge.request("/agent-state", { label }).catch(() => {});
+    void this.electronBridge
+      .request("/agent-state", { label, spaceId: this.selectedSpaceId })
+      .catch(() => {});
   }
 
   sendCDPMessage(payload) {

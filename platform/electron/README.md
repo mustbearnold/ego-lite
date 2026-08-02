@@ -78,7 +78,7 @@ Closing the last primary tab closes the native window; closing the last tab in a
 npm run test:last-tab
 ```
 
-The Spaces menu lists active agent workspaces and exposes Take over/Return control plus Stop actions; stopping a Space closes its task tabs and removes its persisted task state.
+The Spaces menu lists active agent workspaces, shows each Space’s live task status, and exposes Take over/Return control plus Stop actions; stopping a Space closes its task tabs and removes its persisted task state.
 
 The Electron toolbar also provides New tab and Close tab controls, with Ctrl/Cmd+T and Ctrl/Cmd+W shortcuts from either the toolbar or the focused page; closing the final primary tab closes the native window.
 

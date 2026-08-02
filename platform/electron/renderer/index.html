@@ -912,7 +912,11 @@
           row.className = "space-row";
           row.dataset.spaceId = String(space.id);
           const label = document.createElement("span");
-          label.textContent = `${space.name || `Space ${space.id}`} · ${space.ownership === "user" ? "user" : "agent"} · ${space.tabCount || 0} tab${space.tabCount === 1 ? "" : "s"}`;
+          const taskState = space.taskState
+            ? ` · ${space.taskState}`
+            : " · idle";
+          label.textContent = `${space.name || `Space ${space.id}`} · ${space.ownership === "user" ? "user" : "agent"} · ${space.tabCount || 0} tab${space.tabCount === 1 ? "" : "s"}${taskState}`;
+          label.title = space.taskState || "idle";
           row.append(label);
 
           const ownership = document.createElement("button");

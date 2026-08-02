@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -11,10 +11,35 @@ const electronPath =
 const electronArgs = packagedExecutable ? [] : ["platform/electron"];
 const profileDir = await mkdtemp(join(tmpdir(), "ego-electron-background-"));
 const bridgeFile = join(profileDir, "ego-lite-bridge.json");
+const statePath = join(profileDir, "task-spaces.json");
+await writeFile(
+  statePath,
+  `${JSON.stringify(
+    {
+      version: 1,
+      nextId: 2,
+      spaces: [
+        {
+          id: 1,
+          taskId: "background-parity",
+          name: "background parity",
+          createdBy: "agent",
+          ownership: "agent",
+          createdAt: new Date().toISOString(),
+          contextId: null,
+          mode: "tab",
+          tabTargetIds: [],
+        },
+      ],
+    },
+    null,
+    2,
+  )}\n`,
+);
 const environment = {
   ...process.env,
   EGO_LITE_PROFILE_DIR: profileDir,
-  EGO_LITE_STATE_PATH: join(profileDir, "task-spaces.json"),
+  EGO_LITE_STATE_PATH: statePath,
   EGO_LITE_DISABLE_GPU: "1",
 };
 
@@ -53,6 +78,76 @@ async function waitFor(label, callback, timeoutMs = 15000) {
   );
 }
 
+class CdpConnection {
+  constructor(url) {
+    this.url = url;
+    this.socket = null;
+    this.nextId = 1;
+    this.pending = new Map();
+  }
+
+  async connect() {
+    this.socket = new WebSocket(this.url);
+    await new Promise((resolvePromise, rejectPromise) => {
+      this.socket.addEventListener("open", resolvePromise, { once: true });
+      this.socket.addEventListener("error", rejectPromise, { once: true });
+    });
+    this.socket.addEventListener("message", (event) => {
+      const message = JSON.parse(String(event.data));
+      const pending = this.pending.get(message.id);
+      if (!pending) return;
+      this.pending.delete(message.id);
+      if (message.error) pending.reject(new Error(message.error.message));
+      else pending.resolve(message.result || {});
+    });
+    return this;
+  }
+
+  request(method, params = {}, sessionId = undefined) {
+    const id = this.nextId++;
+    return new Promise((resolvePromise, rejectPromise) => {
+      this.pending.set(id, { resolve: resolvePromise, reject: rejectPromise });
+      this.socket.send(
+        JSON.stringify({
+          id,
+          method,
+          params,
+          ...(sessionId ? { sessionId } : {}),
+        }),
+      );
+    });
+  }
+
+  close() {
+    this.socket?.close();
+  }
+}
+
+async function readEndpoint() {
+  try {
+    const lines = (
+      await readFile(join(profileDir, "DevToolsActivePort"), "utf8")
+    )
+      .trim()
+      .split(/\r?\n/);
+    return `ws://127.0.0.1:${Number(lines[0])}${lines[1]}`;
+  } catch {
+    return null;
+  }
+}
+
+async function evaluate(connection, sessionId, expression) {
+  const result = await connection.request(
+    "Runtime.evaluate",
+    { expression, awaitPromise: true, returnByValue: true },
+    sessionId,
+  );
+  if (result.exceptionDetails) {
+    throw new Error(result.exceptionDetails.text || "DOM evaluation failed");
+  }
+  return result.result?.value;
+}
+
 async function readBridge() {
   return JSON.parse(await readFile(bridgeFile, "utf8"));
 }
@@ -89,6 +184,18 @@ try {
       `primary tab is not visible initially: ${JSON.stringify(initial)}`,
     );
   }
+  const endpoint = await waitFor("Electron renderer CDP endpoint", readEndpoint);
+  const connection = await new CdpConnection(endpoint).connect();
+  const renderer = await waitFor("toolbar target", async () => {
+    const targets = await connection.request("Target.getTargets");
+    return targets.targetInfos?.find((target) =>
+      target.url.includes("/renderer/index.html"),
+    );
+  });
+  const attached = await connection.request("Target.attachToTarget", {
+    targetId: renderer.targetId,
+    flatten: true,
+  });
 
   const created = await bridgeRequest(bridge, "/create-tab", {
     spaceId: 1,
@@ -119,6 +226,19 @@ try {
     );
   }
 
+  await bridgeRequest(bridge, "/agent-state", {
+    spaceId: 1,
+    label: "Running background parity",
+  });
+  const spaceStatus = await waitFor("Space running status", async () => {
+    const labels = await evaluate(
+      connection,
+      attached.sessionId,
+      "[...document.querySelectorAll('#space-list .space-row > span')].map((node) => node.textContent)",
+    );
+    return labels.find((label) => label.includes("Running background parity")) || null;
+  });
+
   await bridgeRequest(bridge, "/activate-tab", { targetId: created.targetId });
   const revealed = await waitFor("explicit task reveal", async () => {
     const result = await tabsWith(bridge);
@@ -147,11 +267,13 @@ try {
       backgroundTargetId: created.targetId,
       backgroundSpaceName: backgroundTask.spaceName,
       backgroundActive: backgroundTask.active,
+      spaceStatus,
       restoredPrimaryActive: Boolean(
         restored.tabs.find((tab) => tab.targetId === primary.targetId)?.active,
       ),
     }),
   );
+  connection.close();
 } catch (error) {
   throw new Error(`${error.message}\nstdout:\n${stdout}\nstderr:\n${stderr}`);
 } finally {

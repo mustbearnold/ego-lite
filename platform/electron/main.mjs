@@ -160,6 +160,7 @@ let updateState = {
 };
 let bookmarks = [];
 let agentTaskState = null;
+const agentTaskStates = new Map();
 const bridgeFile = join(PROFILE_DIR, "ego-lite-bridge.json");
 const MIGRATION_PROMPT_MARKER = join(PROFILE_DIR, ".migration-prompted");
 const MIGRATED_TABS_FILE = "ego-lite-migrated-tabs.json";
@@ -666,6 +667,8 @@ function currentTaskSpaces() {
     tabCount: [...managedViews.values()].filter(
       (managed) => managed.spaceId === Number(space.id),
     ).length,
+    taskState: agentTaskStates.get(Number(space.id)) || null,
+    running: agentTaskStates.has(Number(space.id)),
   }));
 }
 
@@ -1476,6 +1479,7 @@ async function closeManagedView(targetId) {
       state.spaces = state.spaces.filter(
         (space) => space.id !== closedSpaceId,
       );
+      agentTaskStates.delete(closedSpaceId);
       writeTaskSpaceState(state);
     }
   }
@@ -1649,9 +1653,23 @@ async function handleBridgeRequest(pathname, body) {
   if (pathname === "/health") return { ok: true };
   if (pathname === "/agent-state") {
     const value = body.label == null ? "" : String(body.label).trim();
-    agentTaskState = value ? value.slice(0, 120) : null;
+    const normalized = value ? value.slice(0, 120) : null;
+    const rawSpaceId = body.spaceId;
+    const spaceId =
+      rawSpaceId === null || rawSpaceId === undefined
+        ? null
+        : Number(rawSpaceId);
+    if (Number.isInteger(spaceId) && spaceId >= 0) {
+      if (normalized) agentTaskStates.set(spaceId, normalized);
+      else agentTaskStates.delete(spaceId);
+    }
+    agentTaskState = normalized;
     publishBrowserState();
-    return { agentTaskState };
+    return {
+      agentTaskState,
+      spaceId: Number.isInteger(spaceId) && spaceId >= 0 ? spaceId : null,
+      taskState: normalized,
+    };
   }
   if (pathname === "/update-state") {
     return { updateState: { ...updateState } };
