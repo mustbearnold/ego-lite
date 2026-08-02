@@ -4,16 +4,18 @@ import {
   access,
   cp,
   mkdir,
+  mkdtemp,
   open,
   readFile,
   rename,
   readlink,
   rm,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import { constants, existsSync, realpathSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -30,6 +32,7 @@ const DEFAULT_STATE_PATH = join(
   "ego-lite",
   "task-spaces.json",
 );
+const MIGRATED_TABS_FILE = "ego-lite-migrated-tabs.json";
 const HOST_VERSION = "linux-host/0.4.0";
 const nativeFetch = globalThis.fetch?.bind(globalThis);
 const DEFAULT_EXECUTABLES = [
@@ -131,13 +134,23 @@ Environment:
 
 Migration:
   --migrate-profile imports bookmarks, browser settings, extensions, local
-  storage, and readable cookies into the Linux profile. Close the source
-  browser first. Existing Linux profile data is backed up before replacement;
-  saved passwords are not copied across browser keyrings.
+  storage, readable cookies, and restorable HTTP(S) tabs into the Linux
+  profile. Close the source browser first. Existing Linux profile data is
+  backed up before replacement; saved passwords are not copied across browser
+  keyrings.
 `;
 
 function fail(message) {
   throw new Error(message);
+}
+
+function migrationTabUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return ["http:", "https:"].includes(url.protocol) ? url.toString() : null;
+  } catch {
+    return null;
+  }
 }
 
 function cdpError(error) {
@@ -311,6 +324,7 @@ class LinuxEgoHost {
         space.mode = "tab";
       }
     }
+    if (!this.isElectron) await this.restorePendingMigratedTabs();
     await this.ensureDefaultTab();
     return this;
   }
@@ -335,6 +349,63 @@ class LinuxEgoHost {
     const temporaryPath = `${this.statePath}.${process.pid}.tmp`;
     await writeFile(temporaryPath, `${JSON.stringify(this.state, null, 2)}\n`);
     await rename(temporaryPath, this.statePath);
+  }
+
+  async restorePendingMigratedTabs() {
+    const pendingPath = join(this.profileDir, MIGRATED_TABS_FILE);
+    let manifest;
+    try {
+      manifest = JSON.parse(await readFile(pendingPath, "utf8"));
+    } catch (error) {
+      if (error?.code === "ENOENT") return 0;
+      console.warn(
+        `[ego-lite] could not read migrated tab manifest: ${error?.message || String(error)}`,
+      );
+      return 0;
+    }
+    if (manifest?.version !== 1 || !Array.isArray(manifest.tabs)) {
+      console.warn("[ego-lite] ignoring an unsupported migrated tab manifest");
+      return 0;
+    }
+
+    const tabs = manifest.tabs
+      .map((tab) => ({ ...tab, url: migrationTabUrl(tab?.url) }))
+      .filter((tab) => tab.url);
+    if (tabs.length === 0) {
+      await unlink(pendingPath).catch(() => {});
+      return 0;
+    }
+
+    const existingPages = (await this.allTargets()).filter(
+      (target) => target.type === "page",
+    );
+    const existingNonBlank = existingPages.filter(
+      (target) => !["about:blank", "chrome://newtab/"].includes(target.url),
+    );
+    if (existingNonBlank.length > 0) {
+      console.warn(
+        "[ego-lite] leaving migrated tabs pending because the target browser already has open tabs",
+      );
+      return 0;
+    }
+    for (const target of existingPages) {
+      await this.connection
+        .request("Target.closeTarget", { targetId: target.targetId })
+        .catch(() => {});
+    }
+
+    const created = [];
+    for (const tab of tabs) {
+      const target = await this.createBrowserTab(tab.url);
+      created.push({ targetId: target.targetId, active: Boolean(tab.active) });
+    }
+    const active = created.find((tab) => tab.active) || created[0];
+    if (active) {
+      this.selectedTargetId = active.targetId;
+      await this.activateTarget(active.targetId).catch(() => {});
+    }
+    await unlink(pendingPath);
+    return created.length;
   }
 
   async ensureDefaultTab() {
@@ -1456,6 +1527,8 @@ async function launchMigrationBrowser({
   userDataDir,
   profileName,
   passwordStore,
+  restoreLastSession = false,
+  extensionDir = null,
 }) {
   await mkdir(userDataDir, { recursive: true });
   const args = [
@@ -1466,13 +1539,21 @@ async function launchMigrationBrowser({
     `--profile-directory=${profileName}`,
     "--no-first-run",
     "--no-default-browser-check",
-    "--disable-extensions",
     "--disable-sync",
     "--headless=new",
     "--disable-gpu",
     "--disable-dev-shm-usage",
     "--noerrdialogs",
   ];
+  if (extensionDir) {
+    args.push(
+      `--disable-extensions-except=${extensionDir}`,
+      `--load-extension=${extensionDir}`,
+    );
+  } else {
+    args.push("--disable-extensions");
+  }
+  if (restoreLastSession) args.push("--restore-last-session");
   if (passwordStore) args.push(`--password-store=${passwordStore}`);
   if (process.getuid?.() === 0) args.push("--no-sandbox");
 
@@ -1502,9 +1583,14 @@ async function launchMigrationBrowser({
 }
 
 async function stopMigrationBrowser(browser) {
-  await browser.connection?.request("Browser.close").catch(() => {});
-  browser.connection?.close();
-  const child = browser.child;
+  if (browser?.connection) {
+    await Promise.race([
+      browser.connection.request("Browser.close").catch(() => {}),
+      new Promise((resolvePromise) => setTimeout(resolvePromise, 2000)),
+    ]);
+  }
+  browser?.connection?.close();
+  const child = browser?.child;
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
   await new Promise((resolvePromise) => {
     let settled = false;
@@ -1533,6 +1619,178 @@ async function stopMigrationBrowser(browser) {
     }, 3000);
     child.once("close", settle);
   });
+}
+
+async function createMigrationProbeExtension() {
+  const extensionDir = await mkdtemp(
+    join(tmpdir(), "ego-lite-migration-extension-"),
+  );
+  await writeFile(
+    join(extensionDir, "manifest.json"),
+    `${JSON.stringify(
+      {
+        manifest_version: 3,
+        name: "ego lite migration probe",
+        version: "1.0.0",
+        permissions: ["tabs", "tabGroups"],
+        background: { service_worker: "service-worker.js" },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  await writeFile(
+    join(extensionDir, "service-worker.js"),
+    "chrome.runtime.onInstalled.addListener(() => {});\n",
+  );
+  return extensionDir;
+}
+
+async function attachMigrationExtension(connection) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const targets = await connection.request("Target.getTargets");
+    const worker = (targets.targetInfos || []).find(
+      (target) =>
+        target.type === "service_worker" &&
+        target.url.startsWith("chrome-extension://"),
+    );
+    if (worker) {
+      const result = await connection.request("Target.attachToTarget", {
+        targetId: worker.targetId,
+        flatten: true,
+      });
+      await connection
+        .request("Runtime.enable", {}, result.sessionId)
+        .catch(() => {});
+      return result.sessionId;
+    }
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+  }
+  fail("migration probe extension did not start");
+}
+
+async function evaluateMigrationExtension(connection, sessionId, expression) {
+  const result = await Promise.race([
+    connection.request(
+      "Runtime.evaluate",
+      {
+        expression,
+        awaitPromise: true,
+        returnByValue: true,
+      },
+      sessionId,
+    ),
+    new Promise((_, rejectPromise) =>
+      setTimeout(
+        () => rejectPromise(new Error("migration probe evaluation timed out")),
+        5000,
+      ),
+    ),
+  ]);
+  if (result.exceptionDetails) {
+    fail(
+      result.exceptionDetails.text ||
+        result.exceptionDetails.description ||
+        "migration probe evaluation failed",
+    );
+  }
+  return result.result?.value;
+}
+
+function migrationTabManifest(rawTabs, rawGroups) {
+  const groupsByKey = new Map();
+  for (const group of Array.isArray(rawGroups) ? rawGroups : []) {
+    const windowId = String(group?.windowId ?? "");
+    const id = Number(group?.id);
+    if (!windowId || !Number.isInteger(id) || id < 0) continue;
+    const key = `${windowId}:${id}`;
+    groupsByKey.set(key, {
+      id: key,
+      title: String(group.title || "").slice(0, 120),
+      color: String(group.color || "grey"),
+      collapsed: Boolean(group.collapsed),
+      windowId,
+    });
+  }
+
+  const tabs = (Array.isArray(rawTabs) ? rawTabs : [])
+    .map((tab) => {
+      const url = migrationTabUrl(tab?.url);
+      if (!url) return null;
+      const windowId = String(tab?.windowId ?? "");
+      const groupId = Number(tab?.groupId);
+      const groupKey =
+        windowId && Number.isInteger(groupId) && groupId >= 0
+          ? `${windowId}:${groupId}`
+          : null;
+      return {
+        url,
+        title: String(tab.title || "").slice(0, 240),
+        index: Number.isInteger(tab.index) ? tab.index : 0,
+        active: Boolean(tab.active),
+        groupId: groupsByKey.has(groupKey) ? groupKey : null,
+        windowId,
+      };
+    })
+    .filter(Boolean)
+    .sort(
+      (left, right) =>
+        left.windowId.localeCompare(right.windowId, undefined, {
+          numeric: true,
+        }) || left.index - right.index,
+    );
+  const groupIds = new Set(tabs.map((tab) => tab.groupId).filter(Boolean));
+  const groups = [...groupsByKey.values()].filter((group) =>
+    groupIds.has(group.id),
+  );
+  return { version: 1, tabs, groups };
+}
+
+async function captureMigrationTabs(source, executable) {
+  const extensionDir = await createMigrationProbeExtension();
+  let browser;
+  try {
+    browser = await launchMigrationBrowser({
+      executable,
+      userDataDir: source.userDataDir,
+      profileName: source.profileName,
+      restoreLastSession: true,
+      extensionDir,
+    });
+    const extensionSession = await attachMigrationExtension(
+      browser.connection,
+    );
+    const rawTabs = await evaluateMigrationExtension(
+      browser.connection,
+      extensionSession,
+      "new Promise((resolve) => chrome.tabs.query({}, resolve))",
+    );
+    const rawGroups = await evaluateMigrationExtension(
+      browser.connection,
+      extensionSession,
+      "new Promise((resolve) => chrome.tabGroups.query({}, resolve))",
+    );
+    return migrationTabManifest(rawTabs, rawGroups);
+  } catch (error) {
+    console.warn(
+      `[ego-lite] could not capture migrated tabs: ${error?.message || String(error)}`,
+    );
+    return { version: 1, tabs: [], groups: [] };
+  } finally {
+    await stopMigrationBrowser(browser).catch(() => {});
+    await rm(extensionDir, { recursive: true, force: true });
+  }
+}
+
+async function writeMigratedTabsManifest(targetUserDataDir, manifest) {
+  if (!manifest.tabs.length) return null;
+  await mkdir(targetUserDataDir, { recursive: true });
+  const manifestPath = join(targetUserDataDir, MIGRATED_TABS_FILE);
+  const temporaryPath = `${manifestPath}.${process.pid}.tmp`;
+  await writeFile(temporaryPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  await rename(temporaryPath, manifestPath);
+  return manifestPath;
 }
 
 async function attachMigrationTarget(connection) {
@@ -1651,6 +1909,7 @@ async function migrateProfile(sourcePath) {
   await ensureProfileNotRunning(targetUserDataDir, "ego lite");
 
   const executable = findExecutable(source.executableCandidates);
+  const migratedTabs = await captureMigrationTabs(source, executable);
   const copied = await copyMigrationData(source.profileDir, targetProfileDir);
   const cookies = await exportMigrationCookies(source, executable);
   const imported = await importMigrationCookies(
@@ -1658,6 +1917,7 @@ async function migrateProfile(sourcePath) {
     cookies,
     executable,
   );
+  await writeMigratedTabsManifest(targetUserDataDir, migratedTabs);
   return {
     source: source.profileDir,
     target: targetProfileDir,
@@ -1668,6 +1928,11 @@ async function migrateProfile(sourcePath) {
       found: cookies.length,
       imported: imported.imported,
       failed: imported.failed,
+    },
+    tabs: {
+      found: migratedTabs.tabs.length,
+      groups: migratedTabs.groups.length,
+      manifest: migratedTabs.tabs.length ? MIGRATED_TABS_FILE : null,
     },
     passwords: "not imported; encrypted browser keyrings are kept separate",
   };

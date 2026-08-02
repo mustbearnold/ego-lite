@@ -61,6 +61,7 @@ let bridgeToken;
 let agentTaskState = null;
 const bridgeFile = join(PROFILE_DIR, "ego-lite-bridge.json");
 const MIGRATION_PROMPT_MARKER = join(PROFILE_DIR, ".migration-prompted");
+const MIGRATED_TABS_FILE = "ego-lite-migrated-tabs.json";
 
 const permissionAliases = {
   clipboardReadWrite: ["clipboard-read", "clipboard-sanitized-write"],
@@ -94,6 +95,7 @@ function managedTabState() {
     spaceName: managed.spaceName || null,
     url: managed.view.webContents.getURL() || "about:blank",
     title: managed.view.webContents.getTitle() || "",
+    tabGroup: managed.tabGroup || null,
     active: managed.view === browserView,
   }));
 }
@@ -386,12 +388,18 @@ function applyPermissionCommand({ targetId, method, params = {} }) {
 
 async function registerManagedView(
   view,
-  { spaceId = null, spaceName = null, tabId = null } = {},
+  { spaceId = null, spaceName = null, tabId = null, tabGroup = null } = {},
 ) {
   installViewListeners(view);
   installPermissionHandlers(view.webContents.session);
   const targetId = await targetIdForView(view);
-  managedViews.set(targetId, { view, spaceId, spaceName, tabId });
+  managedViews.set(targetId, {
+    view,
+    spaceId,
+    spaceName,
+    tabId,
+    tabGroup,
+  });
   publishBrowserState();
   return targetId;
 }
@@ -564,7 +572,97 @@ async function navigate(value) {
   return navigateOnView(browserView, value);
 }
 
+function restoredTabUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return ["http:", "https:"].includes(url.protocol) ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+async function readMigratedTabsManifest() {
+  const manifestPath = join(PROFILE_DIR, MIGRATED_TABS_FILE);
+  let manifest;
+  try {
+    manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      console.warn(
+        `[ego-lite] could not read migrated tab manifest: ${error?.message || String(error)}`,
+      );
+    }
+    return null;
+  }
+  if (manifest?.version !== 1 || !Array.isArray(manifest.tabs)) {
+    console.warn("[ego-lite] ignoring an unsupported migrated tab manifest");
+    return null;
+  }
+  const groups = new Map(
+    (Array.isArray(manifest.groups) ? manifest.groups : [])
+      .filter((group) => group && typeof group.id === "string")
+      .map((group) => [
+        group.id,
+        {
+          id: group.id,
+          title: String(group.title || "").slice(0, 120),
+          color: String(group.color || "grey"),
+          collapsed: Boolean(group.collapsed),
+        },
+      ]),
+  );
+  const tabs = manifest.tabs
+    .map((tab) => {
+      const url = restoredTabUrl(tab?.url);
+      if (!url) return null;
+      const group = groups.get(tab?.groupId) || null;
+      return {
+        url,
+        active: Boolean(tab.active),
+        tabGroup: group,
+      };
+    })
+    .filter(Boolean);
+  return { manifestPath, tabs };
+}
+
+async function createPrimaryBrowserView({
+  url = "about:blank",
+  tabId = null,
+  tabGroup = null,
+} = {}) {
+  const view = new BrowserView({
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  enableAccessibility(view);
+  view.webContents.setWindowOpenHandler(({ url: openedUrl }) => {
+    void navigateOnView(view, openedUrl).catch((error) => {
+      console.error(`[ego-lite] cannot open ${openedUrl}: ${error.message}`);
+    });
+    return { action: "deny" };
+  });
+  await loadMigratedExtensions(view.webContents.session);
+  try {
+    await view.webContents.loadURL(normalizeUrl(url));
+  } catch (error) {
+    console.warn(
+      `[ego-lite] could not restore ${url}: ${error?.message || String(error)}`,
+    );
+    await view.webContents.loadURL("about:blank");
+  }
+  const targetId = await registerManagedView(view, {
+    tabId,
+    tabGroup,
+  });
+  return { view, targetId };
+}
+
 async function createWindow() {
+  const migrated = await readMigratedTabsManifest();
+  const restoredTabs = migrated?.tabs || [];
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -582,13 +680,29 @@ async function createWindow() {
     },
   });
 
-  browserView = new BrowserView({
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
-  enableAccessibility(browserView);
+  const firstTab = restoredTabs[0] || {
+    url: "about:blank",
+    tabGroup: null,
+    active: true,
+  };
+  const restoredViews = [
+    await createPrimaryBrowserView({
+      url: firstTab.url,
+      tabId: restoredTabs.length ? "migrated-0" : "default",
+      tabGroup: firstTab.tabGroup,
+    }),
+  ];
+  for (let index = 1; index < restoredTabs.length; index += 1) {
+    const tab = restoredTabs[index];
+    restoredViews.push(
+      await createPrimaryBrowserView({
+        url: tab.url,
+        tabId: `migrated-${index}`,
+        tabGroup: tab.tabGroup,
+      }),
+    );
+  }
+  browserView = restoredViews[0].view;
   mainWindow.setBrowserView(browserView);
   resizeBrowserView();
   mainWindow.on("resize", resizeBrowserView);
@@ -597,19 +711,13 @@ async function createWindow() {
     mainWindow = null;
   });
 
-  browserView.webContents.setWindowOpenHandler(({ url }) => {
-    void navigate(url).catch((error) => {
-      console.error(`[ego-lite] cannot open ${url}: ${error.message}`);
-    });
-    return { action: "deny" };
-  });
-  await loadMigratedExtensions(browserView.webContents.session);
-  await browserView.webContents.loadURL("about:blank");
-  void registerManagedView(browserView, { tabId: "default" }).catch((error) => {
-    console.error(
-      `[ego-lite] cannot register default browser tab: ${error.message}`,
-    );
-  });
+  const activeIndex = restoredTabs.findIndex((tab) => tab.active);
+  if (activeIndex > 0) {
+    setActiveBrowserView(restoredViews[activeIndex].view);
+  }
+  if (migrated?.manifestPath) {
+    await unlink(migrated.manifestPath).catch(() => {});
+  }
   void mainWindow.loadFile(join(MAIN_DIR, "renderer", "index.html"));
 }
 

@@ -64,6 +64,12 @@ The profile-migration probe verifies explicit Chrome-data migration, backup crea
 npm run test:profile-migration
 ```
 
+Migration also captures restorable HTTP(S) tabs and Chromium tab-group metadata through a temporary isolated MV3 probe. The Electron shell recreates those tabs in the primary browser picker and retains each group's title, color, and collapsed marker. Browser-internal pages and encrypted passwords remain excluded. The detached restoration and toolbar DOM probe is:
+
+```bash
+npm run test:migrated-tabs
+```
+
 The migration-discovery probe verifies that onboarding selects only one usable supported profile and refuses to guess when multiple profiles are available:
 
 ```bash

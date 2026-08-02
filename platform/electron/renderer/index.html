@@ -129,12 +129,26 @@
 
       function applyTabs(tabs = []) {
         tabPicker.replaceChildren();
+        const groups = new Map();
         for (const tab of tabs) {
           const option = document.createElement("option");
           option.value = tab.targetId;
           option.textContent = tabLabel(tab);
           option.selected = Boolean(tab.active);
-          tabPicker.append(option);
+          const group = tab.tabGroup;
+          if (!group) {
+            tabPicker.append(option);
+            continue;
+          }
+          let groupOptions = groups.get(group.id);
+          if (!groupOptions) {
+            groupOptions = document.createElement("optgroup");
+            const suffix = group.collapsed ? " (collapsed)" : "";
+            groupOptions.label = `${group.title || "Tab group"} · ${group.color || "grey"}${suffix}`;
+            groups.set(group.id, groupOptions);
+            tabPicker.append(groupOptions);
+          }
+          groupOptions.append(option);
         }
         tabPicker.disabled = tabs.length < 2;
       }

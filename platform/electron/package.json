@@ -22,6 +22,7 @@
     "test:extension-loading": "xvfb-run --auto-servernum node test/extension-loading.mjs",
     "test:migration-discovery": "node test/migration-discovery.mjs",
     "test:migration-prompt": "xvfb-run --auto-servernum node test/migration-prompt.mjs",
+    "test:migrated-tabs": "xvfb-run --auto-servernum node test/migrated-tabs.mjs",
     "test:profile-migration": "node test/profile-migration.mjs",
     "test:profile-migration:electron": "xvfb-run --auto-servernum env EGO_LITE_ELECTRON_MIGRATION=1 node test/profile-migration.mjs",
     "test:snapshot-contract": "node test/snapshot-contract.mjs",
