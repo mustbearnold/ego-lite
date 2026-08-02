@@ -15,6 +15,7 @@ const profileDir = await mkdtemp(join(tmpdir(), "ego-electron-browser-sync-"));
 const sourceDir = await mkdtemp(join(tmpdir(), "ego-browser-sync-source-"));
 const bridgeFile = join(profileDir, "ego-lite-bridge.json");
 const syncFile = join(profileDir, "ego-lite-browser-sync.json");
+const defaultBrowser = process.env.EGO_LITE_DEFAULT_BROWSER === "1";
 let electron;
 
 class CdpConnection {
@@ -223,64 +224,84 @@ try {
       targetId: renderer.targetId,
       flatten: true,
     });
-    const initial = await waitFor("initial browser sync", async () => {
+    const initial = await waitFor("initial browser sync state", async () => {
       const state = await evaluate(
         connection,
         attached.sessionId,
         "window.egoLite.getBrowserState()",
       );
-      return state?.browserSync?.status === "ready" && state;
+      return (
+        state?.browserSync?.status === (defaultBrowser ? "idle" : "ready") &&
+        state
+      );
     });
     const initialDom = await evaluate(
       connection,
       attached.sessionId,
       "(() => ({bookmarks: document.querySelectorAll('[data-bookmark-url]').length, history: document.querySelectorAll('[data-history-url]').length, status: document.querySelector('#sync-status')?.textContent, source: document.querySelector('#sync-source')?.textContent}))()",
     );
-    assert.equal(initial.browserSync.enabled, true);
-    assert.equal(initial.bookmarks.length, 1);
-    assert.equal(initial.history.length, 1);
-    assert.equal(initialDom.bookmarks, 1);
-    assert.equal(initialDom.history, 1);
-    assert.match(initialDom.status, /Synced 1 bookmarks/);
-    assert.equal(initialDom.source, "Source · Fixture browser");
+    if (defaultBrowser) {
+      assert.equal(initial.browserSync.enabled, true);
+      assert.equal(initial.bookmarks.length, 0);
+      assert.equal(initial.history.length, 0);
+      assert.equal(initialDom.bookmarks, 0);
+      assert.equal(initialDom.history, 0);
+      assert.match(initialDom.status, /On · every 5 minutes/);
+      console.log(
+        JSON.stringify({
+          automaticSyncSkipped: true,
+          bookmarks: initial.bookmarks.length,
+          history: initial.history.length,
+          executable: packagedExecutable ? "packaged" : "source",
+        }),
+      );
+    } else {
+      assert.equal(initial.browserSync.enabled, true);
+      assert.equal(initial.bookmarks.length, 1);
+      assert.equal(initial.history.length, 1);
+      assert.equal(initialDom.bookmarks, 1);
+      assert.equal(initialDom.history, 1);
+      assert.match(initialDom.status, /Synced 1 bookmarks/);
+      assert.equal(initialDom.source, "Source · Fixture browser");
 
-    await writeBookmarks([
-      { name: "Source one", url: "https://one.example/" },
-      { name: "Source two", url: "https://two.example/" },
-    ]);
-    const manual = await evaluate(
-      connection,
-      attached.sessionId,
-      "window.egoLite.syncBrowserData()",
-    );
-    assert.equal(manual.importedBookmarks, 2);
-    const refreshed = await waitFor("manual browser sync DOM", async () => {
-      const state = await evaluate(
+      await writeBookmarks([
+        { name: "Source one", url: "https://one.example/" },
+        { name: "Source two", url: "https://two.example/" },
+      ]);
+      const manual = await evaluate(
         connection,
         attached.sessionId,
-        "window.egoLite.getBrowserState()",
+        "window.egoLite.syncBrowserData()",
       );
-      return state.bookmarks.length === 2 ? state : null;
-    });
-    assert.equal(refreshed.browserSync.status, "ready");
+      assert.equal(manual.importedBookmarks, 2);
+      const refreshed = await waitFor("manual browser sync DOM", async () => {
+        const state = await evaluate(
+          connection,
+          attached.sessionId,
+          "window.egoLite.getBrowserState()",
+        );
+        return state.bookmarks.length === 2 ? state : null;
+      });
+      assert.equal(refreshed.browserSync.status, "ready");
 
-    const disabled = await evaluate(
-      connection,
-      attached.sessionId,
-      "window.egoLite.setBrowserSync({enabled: false})",
-    );
-    assert.equal(disabled.enabled, false);
-    assert.equal(disabled.status, "disabled");
+      const disabled = await evaluate(
+        connection,
+        attached.sessionId,
+        "window.egoLite.setBrowserSync({enabled: false})",
+      );
+      assert.equal(disabled.enabled, false);
+      assert.equal(disabled.status, "disabled");
 
-    console.log(
-      JSON.stringify({
-        initialBookmarks: initial.bookmarks.length,
-        initialHistory: initial.history.length,
-        manualBookmarks: refreshed.bookmarks.length,
-        source: refreshed.browserSync.sourceName,
-        executable: packagedExecutable ? "packaged" : "source",
-      }),
-    );
+      console.log(
+        JSON.stringify({
+          initialBookmarks: initial.bookmarks.length,
+          initialHistory: initial.history.length,
+          manualBookmarks: refreshed.bookmarks.length,
+          source: refreshed.browserSync.sourceName,
+          executable: packagedExecutable ? "packaged" : "source",
+        }),
+      );
+    }
   } finally {
     connection.close();
   }

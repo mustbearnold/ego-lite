@@ -40,6 +40,20 @@ export function browserSyncDocument(value = {}) {
   return normalizeBrowserSyncConfig(value);
 }
 
+export function shouldRunAutomaticBrowserSync(
+  value = {},
+  { isDefaultBrowser = false, now = Date.now() } = {},
+) {
+  const config = normalizeBrowserSyncConfig(value);
+  if (!config.enabled || isDefaultBrowser) return false;
+  if (!config.lastSyncAt) return true;
+  const elapsed = now - Date.parse(config.lastSyncAt);
+  return (
+    !Number.isFinite(elapsed) ||
+    elapsed >= config.intervalMinutes * 60 * 1000
+  );
+}
+
 export function sourceProfileName(profileDir) {
   const value = String(profileDir || "").trim();
   return value ? basename(resolve(value)) : null;

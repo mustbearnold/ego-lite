@@ -25,6 +25,7 @@
     "test:bookmark-controls": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/bookmark-controls.mjs",
     "test:browser-sync": "node test/browser-sync.mjs",
     "test:browser-sync-electron": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/browser-data-sync.mjs",
+    "test:browser-sync-default-browser": "EGO_LITE_DEFAULT_BROWSER=1 ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/browser-data-sync.mjs",
     "test:cookie-parity": "npm run build:sdk && xvfb-run --auto-servernum node test/cookie-inheritance.mjs",
     "test:cdp-boundary": "npm run build:sdk && ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/cdp-boundary.mjs",
     "test:devtools": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/devtools.mjs",

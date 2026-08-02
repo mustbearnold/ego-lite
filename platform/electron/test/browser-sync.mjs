@@ -8,6 +8,7 @@ import {
   normalizeBrowserSyncConfig,
   readBrowserSourceData,
   readBrowserSourceDataInWorker,
+  shouldRunAutomaticBrowserSync,
 } from "../browser-sync.mjs";
 
 const fixtureDir = await mkdtemp(join(tmpdir(), "ego-browser-sync-"));
@@ -98,6 +99,37 @@ try {
   });
   assert.equal(config.intervalMinutes, 5);
   assert.equal(config.sourceProfileDir, fixtureDir);
+
+  const now = Date.parse("2026-08-02T12:00:00.000Z");
+  assert.equal(
+    shouldRunAutomaticBrowserSync(
+      {
+        enabled: true,
+        intervalMinutes: 15,
+        lastSyncAt: "2026-08-02T11:30:00.000Z",
+      },
+      { now },
+    ),
+    true,
+  );
+  assert.equal(
+    shouldRunAutomaticBrowserSync(
+      {
+        enabled: true,
+        intervalMinutes: 15,
+        lastSyncAt: "2026-08-02T11:55:00.000Z",
+      },
+      { now },
+    ),
+    false,
+  );
+  assert.equal(
+    shouldRunAutomaticBrowserSync(
+      { enabled: true, intervalMinutes: 15 },
+      { isDefaultBrowser: true, now },
+    ),
+    false,
+  );
 
   console.log(
     JSON.stringify({

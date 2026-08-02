@@ -37,6 +37,7 @@ import {
   mergeHistoryEntries,
   normalizeBrowserSyncConfig,
   readBrowserSourceDataInWorker,
+  shouldRunAutomaticBrowserSync,
   sourceProfileName,
 } from "./browser-sync.mjs";
 import { openDownloadPath } from "./downloads.mjs";
@@ -261,6 +262,19 @@ function normalizeUrl(value) {
   return url.toString();
 }
 
+function isDefaultBrowser() {
+  if (process.env.EGO_LITE_DEFAULT_BROWSER === "1") return true;
+  if (process.env.EGO_LITE_DEFAULT_BROWSER === "0") return false;
+  try {
+    return (
+      app.isDefaultProtocolClient("http") ||
+      app.isDefaultProtocolClient("https")
+    );
+  } catch {
+    return false;
+  }
+}
+
 function readHistory() {
   try {
     return readHistoryDocument(JSON.parse(readFileSync(HISTORY_PATH, "utf8")));
@@ -400,15 +414,13 @@ async function resolveBrowserSyncSource() {
 
 async function runBrowserDataSync({ force = false } = {}) {
   if (browserSyncBusy) return currentBrowserSync();
-  if (!force && !browserSyncConfig.enabled) return currentBrowserSync();
-  if (!force && browserSyncConfig.lastSyncAt) {
-    const elapsed = Date.now() - Date.parse(browserSyncConfig.lastSyncAt);
-    if (
-      Number.isFinite(elapsed) &&
-      elapsed < browserSyncConfig.intervalMinutes * 60 * 1000
-    ) {
-      return currentBrowserSync();
-    }
+  if (
+    !force &&
+    !shouldRunAutomaticBrowserSync(browserSyncConfig, {
+      isDefaultBrowser: isDefaultBrowser(),
+    })
+  ) {
+    return currentBrowserSync();
   }
 
   browserSyncBusy = true;
