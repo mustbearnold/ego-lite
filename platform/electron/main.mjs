@@ -6,7 +6,7 @@ import {
   ipcMain,
   session,
 } from "electron";
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import {
   readFile,
   readdir,
@@ -31,6 +31,14 @@ const PROFILE_DIR = resolve(
       process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"),
       "ego-lite",
       "chromium-profile",
+    ),
+);
+const STATE_PATH = resolve(
+  process.env.EGO_LITE_STATE_PATH ||
+    join(
+      process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"),
+      "ego-lite",
+      "task-spaces.json",
     ),
 );
 const TOOLBAR_HEIGHT = 52;
@@ -64,6 +72,7 @@ const sessionPermissionStates = new WeakMap();
 const sessionExtensionLoads = new WeakMap();
 let bridgeServer;
 let bridgeToken;
+let browserStateSyncTimer;
 let agentTaskState = null;
 const bridgeFile = join(PROFILE_DIR, "ego-lite-bridge.json");
 const MIGRATION_PROMPT_MARKER = join(PROFILE_DIR, ".migration-prompted");
@@ -115,11 +124,40 @@ function managedTabState() {
   }));
 }
 
+function currentControlState() {
+  const active = [...managedViews.values()].find(
+    (managed) => managed.view === browserView,
+  );
+  if (!active || active.spaceId === null) {
+    return {
+      scope: "primary",
+      ownership: "user",
+      label: "Your tab",
+    };
+  }
+  let space;
+  try {
+    const state = JSON.parse(readFileSync(STATE_PATH, "utf8"));
+    space = state.spaces?.find((candidate) => candidate.id === active.spaceId);
+  } catch {
+    // The host may not have created its state file yet.
+  }
+  const ownership = space?.ownership === "user" ? "user" : "agent";
+  return {
+    scope: "space",
+    spaceId: active.spaceId,
+    spaceName: active.spaceName || space?.name || null,
+    ownership,
+    label: ownership === "user" ? "User control" : "Agent control",
+  };
+}
+
 function currentBrowserState() {
   return {
     title: browserView?.webContents.getTitle() || "ego lite",
     url: browserView?.webContents.getURL() || "about:blank",
     agentTaskState,
+    controlState: currentControlState(),
     canGoBack: browserView?.webContents.navigationHistory.canGoBack() || false,
     canGoForward:
       browserView?.webContents.navigationHistory.canGoForward() || false,
@@ -769,6 +807,15 @@ async function startBridge() {
     bridgeFile,
     `${JSON.stringify({ port: address.port, token: bridgeToken })}\n`,
   );
+  if (!browserStateSyncTimer) {
+    browserStateSyncTimer = setInterval(() => {
+      if (!mainWindow || mainWindow.isDestroyed() || !browserView) return;
+      mainWindow.webContents.send(
+        "ego-lite:browser-state",
+        currentBrowserState(),
+      );
+    }, 500);
+  }
 }
 
 async function navigate(value) {
@@ -1326,6 +1373,7 @@ if (!hasSingleInstance) {
   app.on("before-quit", () => {
     if (sessionSaveTimer) clearTimeout(sessionSaveTimer);
     if (spaceSaveTimer) clearTimeout(spaceSaveTimer);
+    if (browserStateSyncTimer) clearInterval(browserStateSyncTimer);
     savePrimarySessionSync();
     saveSpaceSessionSync();
     bridgeServer?.close();

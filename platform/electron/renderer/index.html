@@ -136,6 +136,28 @@
         text-overflow: ellipsis;
         white-space: nowrap;
       }
+
+      #control {
+        border: 1px solid #4b5563;
+        border-radius: 999px;
+        color: #d1d5db;
+        font-size: 11px;
+        max-width: 110px;
+        overflow: hidden;
+        padding: 4px 8px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      #control[data-ownership="agent"] {
+        border-color: #2563eb;
+        color: #bfdbfe;
+      }
+
+      #control[data-ownership="user"] {
+        border-color: #059669;
+        color: #a7f3d0;
+      }
     </style>
   </head>
   <body>
@@ -160,6 +182,7 @@
         <summary>Groups</summary>
         <div id="group-list" role="menu"></div>
       </details>
+      <span id="control" aria-live="polite">Your tab</span>
       <span id="status">ready</span>
     </div>
     <script>
@@ -171,6 +194,7 @@
       const tabPicker = document.querySelector("#tab-picker");
       const groupMenu = document.querySelector("#group-menu");
       const groupList = document.querySelector("#group-list");
+      const control = document.querySelector("#control");
 
       function tabLabel(tab) {
         const space =
@@ -237,6 +261,12 @@
       function applyState(state) {
         address.value = state.url || "about:blank";
         status.textContent = state.agentTaskState || state.title || "ego lite";
+        const controlState = state.controlState || {
+          ownership: "user",
+          label: "Your tab",
+        };
+        control.textContent = controlState.label || "Your tab";
+        control.dataset.ownership = controlState.ownership || "user";
         back.disabled = !state.canGoBack;
         forward.disabled = !state.canGoForward;
         applyTabs(state.tabs);

@@ -312,8 +312,44 @@ try {
     throw new Error(`SDK did not reuse restored task-space tabs: ${JSON.stringify(sdk)}`);
   }
 
+  await bridgeRequest(secondBridge, "/activate-tab", {
+    targetId: restored.tabs[0].targetId,
+  });
+
   const renderer = await connectRenderer();
   try {
+    const agentControl = await waitFor("agent control badge", async () => {
+      const value = await evaluate(
+        renderer.connection,
+        renderer.sessionId,
+        "document.querySelector('#control')?.textContent || ''",
+      );
+      return value === "Agent control" ? value : null;
+    });
+    const state = JSON.parse(await readFile(statePath, "utf8"));
+    state.spaces.find((space) => space.id === 7).ownership = "user";
+    await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`);
+    const userControl = await waitFor("user control badge", async () => {
+      const value = await evaluate(
+        renderer.connection,
+        renderer.sessionId,
+        "document.querySelector('#control')?.textContent || ''",
+      );
+      return value === "User control" ? value : null;
+    });
+    state.spaces.find((space) => space.id === 7).ownership = "agent";
+    await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`);
+    const returnedAgentControl = await waitFor(
+      "returned agent control badge",
+      async () => {
+        const value = await evaluate(
+          renderer.connection,
+          renderer.sessionId,
+          "document.querySelector('#control')?.textContent || ''",
+        );
+        return value === "Agent control" ? value : null;
+      },
+    );
     const toolbar = await waitFor("restored Space toolbar DOM", async () => {
       const value = await evaluate(
         renderer.connection,
@@ -330,6 +366,7 @@ try {
         firstPrimaryActive: Boolean(firstTabs.tabs.find((tab) => tab.spaceId === null)?.active),
         restoredUrls: restored.tabs.map((tab) => tab.url).sort(),
         sdk,
+        controls: { agentControl, userControl, returnedAgentControl },
         toolbar,
       }),
     );

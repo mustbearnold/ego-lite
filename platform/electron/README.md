@@ -42,6 +42,8 @@ The toolbar’s Import button provides the repeatable Settings → Import data p
 
 Agent-created task tabs stay in the background by default, so creating or navigating a Space does not replace the user’s visible tab. Use the toolbar’s tab picker to inspect or reveal a Space explicitly.
 
+When a Space is revealed, the toolbar’s live control badge reports whether the Space is under agent or user control; it follows the ownership state written by the SDK’s handoff and takeover methods.
+
 Labeled pointer actions from the SDK update the local toolbar task status and briefly draw a pointer ring in the selected page. The DOM probe checks both effects without opening a foreground window:
 
 ```bash
