@@ -36,6 +36,12 @@ The RPM target requires `rpmbuild`: install `rpm-tools` on Arch-based systems or
 
 The package includes the Linux host, built SDK, and `ego-browser` skill under its resources. Sign in through the primary visible tab; each new task Space starts with a cookie snapshot from that session, then keeps its own persistent cookie jar. The packaged executable also accepts `--cli`, so a smoke check can use `ego-lite --cli --doctor` or run the SDK through `ego-lite --cli nodejs`. Linux artifacts are written to `platform/electron/dist/`.
 
+The packaged app shows a one-time local welcome page on an empty first launch with the browser and agent connection basics. It records completion in the active profile; set `EGO_LITE_SKIP_MIGRATION=1` for unattended launches, or `EGO_LITE_DISABLE_WELCOME=1` to suppress the page explicitly. The detached DOM probe covers the page and its completion action:
+
+```bash
+npm run test:welcome
+```
+
 Tagged AppImage releases use `electron-updater`: the packaged app checks for updates in the background, downloads them without interrupting the current session, and applies a ready update on the next launch. Debian and RPM installations continue to follow their package-manager update path. Set `EGO_LITE_DISABLE_AUTO_UPDATE=1` for offline or detached test runs.
 
 On the first packaged-app launch, when a supported Chromium-family profile is found and the ego lite profile is still empty, a one-time migration prompt offers to copy portable browser data before the browser window opens. If multiple profiles are found, the prompt first asks you to choose one profile directory. Set `EGO_LITE_SKIP_MIGRATION=1` for unattended launches; choosing to keep profiles separate records the decision in the target profile. Passwords from Chromium’s basic plaintext store are copied; keyring-backed passwords remain excluded.

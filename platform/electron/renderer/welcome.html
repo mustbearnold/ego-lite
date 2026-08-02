@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Welcome to ego lite</title>
+    <style>
+      :root {
+        color: #e5e7eb;
+        background: #111827;
+        font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      }
+
+      body {
+        align-items: center;
+        display: flex;
+        justify-content: center;
+        margin: 0;
+        min-height: 100vh;
+      }
+
+      main {
+        background: #1f2937;
+        border: 1px solid #4b5563;
+        border-radius: 16px;
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+        max-width: 680px;
+        padding: 42px;
+        width: calc(100% - 48px);
+      }
+
+      h1 {
+        font-size: 34px;
+        margin: 0 0 12px;
+      }
+
+      p,
+      li {
+        color: #cbd5e1;
+        font-size: 16px;
+        line-height: 1.55;
+      }
+
+      ul {
+        padding-left: 24px;
+      }
+
+      code {
+        color: #bfdbfe;
+      }
+
+      button {
+        background: #2563eb;
+        border: 0;
+        border-radius: 8px;
+        color: white;
+        cursor: pointer;
+        font-size: 16px;
+        font-weight: 600;
+        padding: 12px 18px;
+      }
+
+      button:hover {
+        background: #1d4ed8;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Welcome to ego lite</h1>
+      <p>
+        Your tabs stay yours while AI agents work in separate Spaces. This
+        Linux package includes the browser, the local agent bridge, and the
+        <code>ego-browser</code> skill.
+      </p>
+      <ul>
+        <li>Use the toolbar to browse, import data, and manage profiles.</li>
+        <li>Agents work in background Spaces with isolated tabs and storage.</li>
+        <li>Run <code>ego-lite --cli --doctor</code> to check the agent connection.</li>
+      </ul>
+      <button data-welcome-action="continue" type="button">
+        Start browsing
+      </button>
+    </main>
+    <script>
+      document
+        .querySelector('[data-welcome-action="continue"]')
+        .addEventListener("click", () => {
+          window.location.href = "about:blank";
+        });
+    </script>
+  </body>
+</html>

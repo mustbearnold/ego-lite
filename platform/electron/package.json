@@ -56,6 +56,7 @@
     "test:tab-audio": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/tab-audio.mjs",
     "test:window-state": "xvfb-run --auto-servernum -s \"-screen 0 1600x1000x24\" node test/window-state.mjs",
     "test:update-controller": "node test/update-controller.mjs",
+    "test:welcome": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/welcome.mjs",
     "package:dir": "npm run build:sdk && electron-builder --linux dir",
     "package:appimage": "npm run build:sdk && electron-builder --linux AppImage",
     "package:linux": "npm run build:sdk && electron-builder --linux",

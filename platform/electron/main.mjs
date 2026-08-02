@@ -49,6 +49,9 @@ import {
 import { createUpdateController } from "./update.mjs";
 
 const MAIN_DIR = dirname(fileURLToPath(import.meta.url));
+const WELCOME_URL = pathToFileURL(
+  join(MAIN_DIR, "renderer", "welcome.html"),
+).toString();
 const CLI_MODE = process.argv.includes("--cli");
 const CLI_PROFILE_MIGRATION =
   CLI_MODE && process.argv.includes("--migrate-profile");
@@ -199,6 +202,7 @@ let bookmarks = [];
 const agentTaskStates = new Map();
 const bridgeFile = join(PROFILE_DIR, "ego-lite-bridge.json");
 const MIGRATION_PROMPT_MARKER = join(PROFILE_DIR, ".migration-prompted");
+const WELCOME_MARKER = join(PROFILE_DIR, ".welcome-seen");
 const MIGRATED_TABS_FILE = "ego-lite-migrated-tabs.json";
 const PRIMARY_SESSION_FILE = "ego-lite-session.json";
 const PRIMARY_SESSION_PATH = join(PROFILE_DIR, PRIMARY_SESSION_FILE);
@@ -978,6 +982,7 @@ function currentBrowserState() {
 function sessionTabUrl(value) {
   try {
     const url = new URL(String(value || "about:blank"));
+    if (url.toString() === WELCOME_URL) return "about:blank";
     if (url.protocol === "about:") {
       return url.toString() === "about:blank" ? url.toString() : null;
     }
@@ -2209,6 +2214,34 @@ async function readPrimarySessionManifest() {
   return readStoredTabsManifest(PRIMARY_SESSION_PATH);
 }
 
+async function shouldShowWelcome({ restoredTabs, migrated }) {
+  if (process.env.EGO_LITE_DISABLE_WELCOME === "1") return false;
+  const explicitlyRequested = process.env.EGO_LITE_SHOW_WELCOME === "1";
+  if (!app.isPackaged && !explicitlyRequested) return false;
+  if (!explicitlyRequested && process.env.EGO_LITE_SKIP_MIGRATION === "1") {
+    return false;
+  }
+  if (migrated || restoredTabs.length > 0) return false;
+  try {
+    await readFile(WELCOME_MARKER, "utf8");
+    return false;
+  } catch (error) {
+    if (error?.code !== "ENOENT") return false;
+  }
+  if (await profileLooksUsable(join(PROFILE_DIR, "Default"))) return false;
+  return true;
+}
+
+function markWelcomeSeen() {
+  try {
+    writeFileSync(WELCOME_MARKER, `${new Date().toISOString()}\n`);
+  } catch (error) {
+    console.warn(
+      `[ego-lite] could not save welcome state: ${error?.message || String(error)}`,
+    );
+  }
+}
+
 async function readSpaceSessionManifest() {
   let manifest;
   try {
@@ -2323,6 +2356,8 @@ async function createWindow() {
   const windowState = readWindowState();
   const stored = migrated || persisted;
   const restoredTabs = stored?.tabs || [];
+  const showWelcome = await shouldShowWelcome({ restoredTabs, migrated });
+  if (showWelcome) markWelcomeSeen();
   mainWindow = new BrowserWindow({
     width: windowState?.width || WINDOW_DEFAULT_WIDTH,
     height: windowState?.height || WINDOW_DEFAULT_HEIGHT,
@@ -2344,7 +2379,7 @@ async function createWindow() {
   if (windowState?.maximized) mainWindow.maximize();
 
   const firstTab = restoredTabs[0] || {
-    url: "about:blank",
+    url: showWelcome ? WELCOME_URL : "about:blank",
     tabGroup: null,
     active: true,
   };
