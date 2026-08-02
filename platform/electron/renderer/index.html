@@ -177,6 +177,10 @@
         position: relative;
       }
 
+      #page-menu {
+        position: relative;
+      }
+
       #bookmark-menu summary {
         background: #1f2937;
         border: 1px solid #4b5563;
@@ -243,6 +247,43 @@
 
       #sync-menu summary::-webkit-details-marker {
         display: none;
+      }
+
+      #page-menu summary {
+        background: #1f2937;
+        border: 1px solid #4b5563;
+        border-radius: 6px;
+        color: #e5e7eb;
+        cursor: pointer;
+        font-size: 13px;
+        height: 34px;
+        list-style: none;
+        padding: 8px 10px;
+        white-space: nowrap;
+      }
+
+      #page-menu summary::-webkit-details-marker {
+        display: none;
+      }
+
+      #page-actions {
+        background: #1f2937;
+        border: 1px solid #4b5563;
+        border-radius: 6px;
+        display: grid;
+        gap: 4px;
+        min-width: 180px;
+        padding: 6px;
+        position: absolute;
+        right: 0;
+        top: 40px;
+        z-index: 10;
+      }
+
+      #page-actions button {
+        font-size: 12px;
+        text-align: left;
+        width: 100%;
       }
 
       #sync-list {
@@ -744,6 +785,9 @@
       <button id="back" type="button" title="Back">‹</button>
       <button id="forward" type="button" title="Forward">›</button>
       <button id="reload" type="button" title="Reload">↻</button>
+      <button id="stop" type="button" title="Stop loading" aria-label="Stop loading">
+        ■
+      </button>
       <button id="mute-tab" type="button" title="Mute tab" aria-label="Mute tab">
         Mute
       </button>
@@ -759,6 +803,14 @@
       <button id="bookmark-page" type="button" title="Bookmark page" aria-label="Bookmark page">
         ☆
       </button>
+      <details id="page-menu">
+        <summary>Page</summary>
+        <div id="page-actions" role="menu">
+          <button id="save-page" type="button" role="menuitem">Save page…</button>
+          <button id="print-page" type="button" role="menuitem">Print…</button>
+          <button id="view-source" type="button" role="menuitem">View page source</button>
+        </div>
+      </details>
       <button id="new-tab" type="button" title="New tab" aria-label="New tab">
         +
       </button>
@@ -850,6 +902,7 @@
       const status = document.querySelector("#status");
       const back = document.querySelector("#back");
       const forward = document.querySelector("#forward");
+      const stop = document.querySelector("#stop");
       const muteTab = document.querySelector("#mute-tab");
       const newTab = document.querySelector("#new-tab");
       const newPrivateTab = document.querySelector("#new-private-tab");
@@ -880,6 +933,10 @@
       const spaceList = document.querySelector("#space-list");
       const groupMenu = document.querySelector("#group-menu");
       const groupList = document.querySelector("#group-list");
+      const pageMenu = document.querySelector("#page-menu");
+      const savePage = document.querySelector("#save-page");
+      const printPage = document.querySelector("#print-page");
+      const viewSource = document.querySelector("#view-source");
       const control = document.querySelector("#control");
       const update = document.querySelector("#update");
       const findBar = document.querySelector("#find-bar");
@@ -1456,6 +1513,7 @@
         control.dataset.ownership = controlState.ownership || "user";
         back.disabled = !state.canGoBack;
         forward.disabled = !state.canGoForward;
+        stop.disabled = !state.loading;
         bookmarkPage.disabled = !state.bookmarkCanToggle;
         bookmarkPage.textContent = state.bookmarked ? "★" : "☆";
         bookmarkPage.title = state.bookmarked
@@ -1539,6 +1597,44 @@
       document
         .querySelector("#reload")
         .addEventListener("click", () => window.egoLite.reload());
+      stop.addEventListener("click", async () => {
+        try {
+          await window.egoLite.stop();
+        } catch (error) {
+          status.textContent = error.message;
+        }
+      });
+      async function runPageAction(button, action, successText) {
+        button.disabled = true;
+        try {
+          const result = await action();
+          if (result?.cancelled) {
+            status.textContent = `${successText} cancelled`;
+          } else if (result?.path) {
+            status.textContent = `${successText}: ${result.path}`;
+          } else {
+            status.textContent = successText;
+          }
+          pageMenu.open = false;
+        } catch (error) {
+          status.textContent = error.message;
+        } finally {
+          button.disabled = false;
+        }
+      }
+      savePage.addEventListener("click", () =>
+        runPageAction(savePage, () => window.egoLite.savePage(), "Page saved"),
+      );
+      printPage.addEventListener("click", () =>
+        runPageAction(printPage, () => window.egoLite.printPage(), "Page printed"),
+      );
+      viewSource.addEventListener("click", () =>
+        runPageAction(
+          viewSource,
+          () => window.egoLite.viewSource(),
+          "Viewing page source",
+        ),
+      );
       muteTab.addEventListener("click", async () => {
         muteTab.disabled = true;
         try {
@@ -1627,6 +1723,9 @@
       window.egoLite.onFocusAddress(focusAddress);
       window.egoLite.onFocusFind(openFind);
       window.egoLite.onFindResult(applyFindResult);
+      window.egoLite.onActionError((error) => {
+        status.textContent = error?.message || "desktop action failed";
+      });
       findInput.addEventListener("input", () => moveFind(true));
       findInput.addEventListener("keydown", (event) => {
         if (event.key === "Escape") {

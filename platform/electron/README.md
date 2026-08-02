@@ -98,6 +98,19 @@ npm run test:find-in-page
 npm run test:fullscreen
 ```
 
+The Page toolbar menu and native File/View menus expose Stop, Save page, Print,
+and View page source. Save uses an HTML-complete archive, Print opens the
+native print flow, and detached runs can set `EGO_LITE_PRINT_TO_PDF_PATH` to
+exercise deterministic PDF output without a dialog. `EGO_LITE_SAVE_PATH` does
+the same for page saves. View page source opens a new tab in the active tab’s
+scope, including an Agent Space. The detached DOM/CDP probe verifies the
+toolbar controls, native menu inventory, saved HTML, PDF header, source
+content, and stopping a deliberately slow response:
+
+```bash
+npm run test:page-actions
+```
+
 User downloads appear in the toolbar’s Downloads menu with progress, an Open action that uses the Linux desktop default application, and a Show action. Primary-tab downloads use `EGO_LITE_DOWNLOAD_DIR` when set, otherwise the normal `~/Downloads` directory; task-Space downloads retain the SDK/CDP-selected download path.
 
 The History menu keeps the last 100 HTTP(S) visits for the active profile, excludes private tabs, opens entries in the active tab, and provides Clear history. Its persistence and toolbar behavior are covered by `npm run test:history` and the detached private-tab/download probe.

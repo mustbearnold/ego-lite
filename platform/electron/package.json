@@ -53,6 +53,7 @@
     "test:url-routing": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/url-routing.mjs",
     "test:profile-migration": "node test/profile-migration.mjs",
     "test:profile-migration:electron": "xvfb-run --auto-servernum env EGO_LITE_ELECTRON_MIGRATION=1 node test/profile-migration.mjs",
+    "test:page-actions": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/page-actions.mjs",
     "test:snapshot-contract": "node test/snapshot-contract.mjs",
     "test:stale-cdp-probe": "node test/stale-cdp-probe.mjs",
     "test:frame-snapshot": "npm run build:sdk && ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/frame-snapshot.mjs",

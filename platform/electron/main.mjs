@@ -4,6 +4,7 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  Menu,
   screen,
   session,
   shell,
@@ -256,7 +257,14 @@ function normalizeUrl(value) {
     : `https://${input}`;
   const url = new URL(candidate);
   if (
-    !new Set(["about:", "data:", "file:", "http:", "https:"]).has(url.protocol)
+    !new Set([
+      "about:",
+      "data:",
+      "file:",
+      "http:",
+      "https:",
+      "view-source:",
+    ]).has(url.protocol)
   ) {
     throw new Error(`unsupported browser URL scheme: ${url.protocol}`);
   }
@@ -965,6 +973,7 @@ function managedTabState() {
     private: Boolean(managed.private),
     muted: managed.view.webContents.isAudioMuted(),
     devtoolsOpen: managed.view.webContents.isDevToolsOpened(),
+    loading: managed.view.webContents.isLoading(),
     url: managed.view.webContents.getURL() || "about:blank",
     title: managed.view.webContents.getTitle() || "",
     tabGroup: managed.tabGroup || null,
@@ -1131,6 +1140,7 @@ function currentBrowserState() {
     canGoBack: browserView?.webContents.navigationHistory.canGoBack() || false,
     canGoForward:
       browserView?.webContents.navigationHistory.canGoForward() || false,
+    loading: Boolean(browserView?.webContents.isLoading()),
     tabs: managedTabState(),
   };
 }
@@ -1142,7 +1152,7 @@ function sessionTabUrl(value) {
     if (url.protocol === "about:") {
       return url.toString() === "about:blank" ? url.toString() : null;
     }
-    return ["file:", "http:", "https:"].includes(url.protocol)
+    return ["file:", "http:", "https:", "view-source:"].includes(url.protocol)
       ? url.toString()
       : null;
   } catch {
@@ -1351,8 +1361,281 @@ function toggleDevTools(view) {
   return true;
 }
 
+function desktopActionError(label, error) {
+  const message = `${label}: ${error?.message || String(error)}`;
+  console.error(`[ego-lite] ${message}`);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("ego-lite:action-error", {
+      action: label,
+      message,
+    });
+  }
+}
+
+function invokeDesktopAction(label, action) {
+  void Promise.resolve()
+    .then(action)
+    .catch((error) => desktopActionError(label, error));
+}
+
+function activePageWebContents() {
+  if (!browserView || browserView.webContents.isDestroyed()) {
+    throw new Error("no active page");
+  }
+  return browserView.webContents;
+}
+
+function pageFilename() {
+  const contents = activePageWebContents();
+  const title = contents.getTitle().trim();
+  let fallback = "page";
+  try {
+    const url = new URL(contents.getURL());
+    fallback = url.hostname || url.protocol.replace(":", "") || fallback;
+  } catch {
+    // Keep the generic filename for browser-internal or incomplete URLs.
+  }
+  const stem = (title || fallback)
+    .replace(/[^a-z0-9._-]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  return `${stem || "page"}.html`;
+}
+
+function configuredActionPath(variable) {
+  const value = String(process.env[variable] || "").trim();
+  return value ? resolve(value) : null;
+}
+
+function actionFilePath(path) {
+  mkdirSync(dirname(path), { recursive: true });
+  return path;
+}
+
+async function stopActivePage() {
+  const contents = activePageWebContents();
+  const wasLoading = contents.isLoading();
+  contents.stop();
+  publishBrowserState();
+  return { stopped: wasLoading, ...currentBrowserState() };
+}
+
+async function saveActivePage() {
+  const contents = activePageWebContents();
+  let filePath = configuredActionPath("EGO_LITE_SAVE_PATH");
+  if (!filePath) {
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: "Save page",
+      defaultPath: join(DOWNLOAD_DIR, pageFilename()),
+      filters: [
+        { name: "HTML page", extensions: ["html", "htm"] },
+        { name: "All files", extensions: ["*"] },
+      ],
+      properties: ["showOverwriteConfirmation", "createDirectory"],
+    });
+    if (result.canceled || !result.filePath) return { cancelled: true };
+    filePath = resolve(result.filePath);
+  }
+  filePath = actionFilePath(filePath);
+  await contents.savePage(filePath, "HTMLComplete");
+  return { saved: true, path: filePath };
+}
+
+async function printActivePage() {
+  const contents = activePageWebContents();
+  const pdfPath = configuredActionPath("EGO_LITE_PRINT_TO_PDF_PATH");
+  if (pdfPath) {
+    const data = await contents.printToPDF({
+      printBackground: true,
+      preferCSSPageSize: true,
+    });
+    actionFilePath(pdfPath);
+    await writeFile(pdfPath, data);
+    return { printed: true, path: pdfPath, mode: "pdf" };
+  }
+
+  return new Promise((resolvePromise, rejectPromise) => {
+    contents.print(
+      { silent: false, printBackground: true },
+      (success, failureReason) => {
+        if (success) {
+          resolvePromise({ printed: true, mode: "dialog" });
+        } else {
+          resolvePromise({
+            printed: false,
+            cancelled: true,
+            reason: failureReason || "print cancelled",
+          });
+        }
+      },
+    );
+  });
+}
+
+function viewSourceTargetUrl(value) {
+  const normalized = normalizeUrl(value);
+  const protocol = new URL(normalized).protocol;
+  if (!["file:", "http:", "https:"].includes(protocol)) {
+    throw new Error("view source is available for web pages and local files");
+  }
+  return `view-source:${normalized}`;
+}
+
+async function viewSourceActivePage() {
+  const source = managedRecordForView(browserView);
+  if (!source) throw new Error("active tab not found");
+  const url = viewSourceTargetUrl(browserView.webContents.getURL());
+  if (source.spaceId === null) {
+    const primary = await createPrimaryBrowserView({
+      url,
+      privateMode: source.private,
+    });
+    setActiveBrowserView(primary.view);
+  } else {
+    const task = await createManagedView({
+      spaceId: source.spaceId,
+      spaceName: source.spaceName,
+      url,
+    });
+    const view = managedViews.get(task.targetId)?.view;
+    if (!view) throw new Error("view-source tab was not created");
+    setActiveBrowserView(view);
+  }
+  return managedTabState();
+}
+
+function menuItemSnapshot(item) {
+  return {
+    id: item.id || null,
+    label: item.label || "",
+    role: item.role || null,
+    accelerator: item.accelerator || null,
+    submenu: item.submenu
+      ? item.submenu.items.map((child) => menuItemSnapshot(child))
+      : null,
+  };
+}
+
+function applicationMenuState() {
+  const menu = Menu.getApplicationMenu();
+  return {
+    items: menu ? menu.items.map((item) => menuItemSnapshot(item)) : [],
+  };
+}
+
+function installApplicationMenu() {
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      {
+        label: "File",
+        submenu: [
+          {
+            id: "file-new-tab",
+            label: "New Tab",
+            accelerator: "CmdOrCtrl+T",
+            click: () => invokeDesktopAction("new tab", () => createUserTab()),
+          },
+          {
+            id: "file-new-private-tab",
+            label: "New Private Tab",
+            accelerator: "CmdOrCtrl+Shift+N",
+            click: () =>
+              invokeDesktopAction("new private tab", () =>
+                createUserTab({ privateMode: true }),
+              ),
+          },
+          {
+            id: "file-close-tab",
+            label: "Close Tab",
+            accelerator: "CmdOrCtrl+W",
+            click: () =>
+              invokeDesktopAction("close tab", () => closeActiveTab()),
+          },
+          { type: "separator" },
+          {
+            id: "file-save-page",
+            label: "Save Page…",
+            accelerator: "CmdOrCtrl+S",
+            click: () =>
+              invokeDesktopAction("save page", () => saveActivePage()),
+          },
+          {
+            id: "file-print-page",
+            label: "Print…",
+            accelerator: "CmdOrCtrl+P",
+            click: () =>
+              invokeDesktopAction("print page", () => printActivePage()),
+          },
+          { type: "separator" },
+          { id: "file-quit", role: "quit", label: "Quit ego lite" },
+        ],
+      },
+      {
+        label: "Edit",
+        submenu: [
+          { role: "undo" },
+          { role: "redo" },
+          { type: "separator" },
+          { role: "cut" },
+          { role: "copy" },
+          { role: "paste" },
+          { role: "selectAll" },
+        ],
+      },
+      {
+        label: "View",
+        submenu: [
+          {
+            id: "view-stop",
+            label: "Stop",
+            accelerator: "Esc",
+            click: () =>
+              invokeDesktopAction("stop loading", () => stopActivePage()),
+          },
+          {
+            id: "view-reload",
+            label: "Reload",
+            accelerator: "CmdOrCtrl+R",
+            click: () =>
+              invokeDesktopAction("reload", () => browserView?.webContents.reload()),
+          },
+          {
+            id: "view-source",
+            label: "View Page Source",
+            accelerator: "CmdOrCtrl+U",
+            click: () =>
+              invokeDesktopAction("view source", () => viewSourceActivePage()),
+          },
+          {
+            id: "view-devtools",
+            label: "Toggle Developer Tools",
+            accelerator: "F12",
+            click: () => toggleDevTools(browserView),
+          },
+          {
+            id: "view-fullscreen",
+            label: "Toggle Full Screen",
+            accelerator: "F11",
+            click: () => {
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.setFullScreen(!mainWindow.isFullScreen());
+              }
+            },
+          },
+        ],
+      },
+      {
+        label: "Window",
+        submenu: [{ role: "minimize" }, { role: "zoom" }],
+      },
+    ]),
+  );
+}
+
 function installViewListeners(view) {
   for (const eventName of [
+    "did-start-loading",
+    "did-stop-loading",
     "did-finish-load",
     "did-navigate",
     "did-navigate-in-page",
@@ -2258,6 +2541,7 @@ async function handleBridgeRequest(pathname, body) {
   if (pathname === "/update-state") {
     return { updateState: { ...updateState } };
   }
+  if (pathname === "/menu") return applicationMenuState();
   if (pathname === "/highlight") return highlightAgentPointer(body);
   if (pathname === "/create-tab") return createManagedView(body);
   if (pathname === "/activate-tab") {
@@ -2982,6 +3266,10 @@ ipcMain.handle("ego-lite:forward", () => {
   }
 });
 ipcMain.handle("ego-lite:reload", () => browserView?.webContents.reload());
+ipcMain.handle("ego-lite:stop", () => stopActivePage());
+ipcMain.handle("ego-lite:save-page", () => saveActivePage());
+ipcMain.handle("ego-lite:print-page", () => printActivePage());
+ipcMain.handle("ego-lite:view-source", () => viewSourceActivePage());
 ipcMain.handle("ego-lite:toggle-tab-mute", () => setActiveTabMuted());
 ipcMain.handle("ego-lite:find-in-page", (_event, value) => {
   const text = String(value?.text || "");
@@ -3110,6 +3398,7 @@ if (!hasSingleInstance) {
   });
 
   app.whenReady().then(async () => {
+    installApplicationMenu();
     if (!CLI_MODE) {
       const pendingImport = await runPendingProfileImport().catch((error) => {
         console.error(

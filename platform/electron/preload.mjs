@@ -5,6 +5,10 @@ contextBridge.exposeInMainWorld("egoLite", {
   back: () => ipcRenderer.invoke("ego-lite:back"),
   forward: () => ipcRenderer.invoke("ego-lite:forward"),
   reload: () => ipcRenderer.invoke("ego-lite:reload"),
+  stop: () => ipcRenderer.invoke("ego-lite:stop"),
+  savePage: () => ipcRenderer.invoke("ego-lite:save-page"),
+  printPage: () => ipcRenderer.invoke("ego-lite:print-page"),
+  viewSource: () => ipcRenderer.invoke("ego-lite:view-source"),
   findInPage: (value) => ipcRenderer.invoke("ego-lite:find-in-page", value),
   closeFind: () => ipcRenderer.invoke("ego-lite:close-find"),
   toggleTabMute: () => ipcRenderer.invoke("ego-lite:toggle-tab-mute"),
@@ -37,6 +41,11 @@ contextBridge.exposeInMainWorld("egoLite", {
   activateTab: (targetId) =>
     ipcRenderer.invoke("ego-lite:activate-tab", targetId),
   getBrowserState: () => ipcRenderer.invoke("ego-lite:browser-state"),
+  onActionError: (callback) => {
+    const listener = (_event, error) => callback(error);
+    ipcRenderer.on("ego-lite:action-error", listener);
+    return () => ipcRenderer.removeListener("ego-lite:action-error", listener);
+  },
   onBrowserState: (callback) => {
     const listener = (_event, state) => callback(state);
     ipcRenderer.on("ego-lite:browser-state", listener);
