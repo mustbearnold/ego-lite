@@ -70,6 +70,12 @@ Migration also captures restorable HTTP(S) tabs and Chromium tab-group metadata 
 npm run test:migrated-tabs
 ```
 
+The Electron shell also persists its primary tabs and active tab across a restart, while task-Space tabs remain owned by the agent state. The detached restart probe verifies the session manifest, restored URLs, active tab, and toolbar DOM:
+
+```bash
+npm run test:session-restore
+```
+
 The migration-discovery probe verifies that onboarding selects only one usable supported profile and refuses to guess when multiple profiles are available:
 
 ```bash

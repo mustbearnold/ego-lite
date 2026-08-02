@@ -6,8 +6,14 @@ import {
   ipcMain,
   session,
 } from "electron";
-import { mkdirSync } from "node:fs";
-import { readFile, readdir, unlink, writeFile } from "node:fs/promises";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import {
+  readFile,
+  readdir,
+  rename,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { createServer } from "node:http";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -62,6 +68,9 @@ let agentTaskState = null;
 const bridgeFile = join(PROFILE_DIR, "ego-lite-bridge.json");
 const MIGRATION_PROMPT_MARKER = join(PROFILE_DIR, ".migration-prompted");
 const MIGRATED_TABS_FILE = "ego-lite-migrated-tabs.json";
+const PRIMARY_SESSION_FILE = "ego-lite-session.json";
+const PRIMARY_SESSION_PATH = join(PROFILE_DIR, PRIMARY_SESSION_FILE);
+let sessionSaveTimer;
 
 const permissionAliases = {
   clipboardReadWrite: ["clipboard-read", "clipboard-sanitized-write"],
@@ -112,9 +121,101 @@ function currentBrowserState() {
   };
 }
 
+function sessionTabUrl(value) {
+  try {
+    const url = new URL(String(value || "about:blank"));
+    if (url.protocol === "about:") {
+      return url.toString() === "about:blank" ? url.toString() : null;
+    }
+    return ["file:", "http:", "https:"].includes(url.protocol)
+      ? url.toString()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function primaryManagedViews() {
+  return [...managedViews.entries()].filter(
+    ([, managed]) => managed.spaceId === null,
+  );
+}
+
+function primarySessionManifest() {
+  const tabs = primaryManagedViews()
+    .map(([targetId, managed], index) => {
+      const url = sessionTabUrl(managed.view.webContents.getURL());
+      if (!url) return null;
+      return {
+        targetId,
+        url,
+        index,
+        active: managed.view === browserView,
+        groupId: managed.tabGroup?.id || null,
+      };
+    })
+    .filter(Boolean);
+  const groups = new Map();
+  for (const [, managed] of primaryManagedViews()) {
+    const group = managed.tabGroup;
+    if (!group || groups.has(group.id)) continue;
+    groups.set(group.id, {
+      id: group.id,
+      title: String(group.title || "").slice(0, 120),
+      color: String(group.color || "grey"),
+      collapsed: Boolean(group.collapsed),
+    });
+  }
+  return {
+    version: 1,
+    tabs,
+    groups: [...groups.values()],
+  };
+}
+
+async function savePrimarySession() {
+  if (!browserView) return;
+  const temporaryPath = `${PRIMARY_SESSION_PATH}.${process.pid}.tmp`;
+  await writeFile(
+    temporaryPath,
+    `${JSON.stringify(primarySessionManifest(), null, 2)}\n`,
+  );
+  await rename(temporaryPath, PRIMARY_SESSION_PATH);
+}
+
+function savePrimarySessionSync() {
+  if (!browserView) return;
+  const temporaryPath = `${PRIMARY_SESSION_PATH}.${process.pid}.sync.tmp`;
+  try {
+    writeFileSync(
+      temporaryPath,
+      `${JSON.stringify(primarySessionManifest(), null, 2)}\n`,
+    );
+    renameSync(temporaryPath, PRIMARY_SESSION_PATH);
+  } catch (error) {
+    console.warn(
+      `[ego-lite] could not flush primary tabs: ${error?.message || String(error)}`,
+    );
+  }
+}
+
+function schedulePrimarySessionSave() {
+  if (!mainWindow || mainWindow.isDestroyed() || !browserView) return;
+  if (sessionSaveTimer) clearTimeout(sessionSaveTimer);
+  sessionSaveTimer = setTimeout(() => {
+    sessionSaveTimer = undefined;
+    void savePrimarySession().catch((error) => {
+      console.warn(
+        `[ego-lite] could not persist primary tabs: ${error?.message || String(error)}`,
+      );
+    });
+  }, 100);
+}
+
 function publishBrowserState() {
   if (!mainWindow || mainWindow.isDestroyed() || !browserView) return;
   mainWindow.webContents.send("ego-lite:browser-state", currentBrowserState());
+  schedulePrimarySessionSave();
 }
 
 function resizeBrowserView() {
@@ -409,6 +510,10 @@ async function createManagedView({
   spaceName = null,
   url = "about:blank",
 }) {
+  if (spaceId === null) {
+    const primary = await createPrimaryBrowserView({ url });
+    return { targetId: primary.targetId };
+  }
   const partition = `persist:ego-lite-${String(spaceId).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
   const view = new BrowserView({
     webPreferences: {
@@ -440,12 +545,23 @@ async function navigateOnView(view, value) {
 async function closeManagedView(targetId) {
   const managed = managedViews.get(targetId);
   if (!managed) return { closed: false };
+  const wasPrimary = managed.spaceId === null;
+  const wasActive = managed.view === browserView;
   managedViews.delete(targetId);
-  if (managed.view === browserView) {
-    const fallback = [...managedViews.values()][0]?.view;
+  if (wasActive) {
+    const fallback =
+      primaryManagedViews()[0]?.[1].view || [...managedViews.values()][0]?.view;
+    browserView = fallback || null;
     if (fallback) setActiveBrowserView(fallback);
   }
   managed.view.webContents.close();
+  if (wasPrimary && primaryManagedViews().length === 0 && mainWindow) {
+    const replacement = await createPrimaryBrowserView({
+      url: "about:blank",
+      tabId: "default",
+    });
+    setActiveBrowserView(replacement.view);
+  }
   publishBrowserState();
   return { closed: true };
 }
@@ -572,24 +688,28 @@ async function navigate(value) {
   return navigateOnView(browserView, value);
 }
 
-function restoredTabUrl(value) {
+function storedTabUrl(value, { migration = false } = {}) {
   try {
     const url = new URL(String(value || ""));
-    return ["http:", "https:"].includes(url.protocol) ? url.toString() : null;
+    if (migration) {
+      return ["http:", "https:"].includes(url.protocol)
+        ? url.toString()
+        : null;
+    }
+    return sessionTabUrl(url.toString());
   } catch {
     return null;
   }
 }
 
-async function readMigratedTabsManifest() {
-  const manifestPath = join(PROFILE_DIR, MIGRATED_TABS_FILE);
+async function readStoredTabsManifest(manifestPath, { migration = false } = {}) {
   let manifest;
   try {
     manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   } catch (error) {
     if (error?.code !== "ENOENT") {
       console.warn(
-        `[ego-lite] could not read migrated tab manifest: ${error?.message || String(error)}`,
+        `[ego-lite] could not read stored tab manifest: ${error?.message || String(error)}`,
       );
     }
     return null;
@@ -613,7 +733,7 @@ async function readMigratedTabsManifest() {
   );
   const tabs = manifest.tabs
     .map((tab) => {
-      const url = restoredTabUrl(tab?.url);
+      const url = storedTabUrl(tab?.url, { migration });
       if (!url) return null;
       const group = groups.get(tab?.groupId) || null;
       return {
@@ -624,6 +744,16 @@ async function readMigratedTabsManifest() {
     })
     .filter(Boolean);
   return { manifestPath, tabs };
+}
+
+async function readMigratedTabsManifest() {
+  return readStoredTabsManifest(join(PROFILE_DIR, MIGRATED_TABS_FILE), {
+    migration: true,
+  });
+}
+
+async function readPrimarySessionManifest() {
+  return readStoredTabsManifest(PRIMARY_SESSION_PATH);
 }
 
 async function createPrimaryBrowserView({
@@ -662,7 +792,9 @@ async function createPrimaryBrowserView({
 
 async function createWindow() {
   const migrated = await readMigratedTabsManifest();
-  const restoredTabs = migrated?.tabs || [];
+  const persisted = migrated ? null : await readPrimarySessionManifest();
+  const stored = migrated || persisted;
+  const restoredTabs = stored?.tabs || [];
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -718,6 +850,11 @@ async function createWindow() {
   if (migrated?.manifestPath) {
     await unlink(migrated.manifestPath).catch(() => {});
   }
+  await savePrimarySession().catch((error) => {
+    console.warn(
+      `[ego-lite] could not persist initial primary tabs: ${error?.message || String(error)}`,
+    );
+  });
   void mainWindow.loadFile(join(MAIN_DIR, "renderer", "index.html"));
 }
 
@@ -896,6 +1033,8 @@ if (!hasSingleInstance) {
   });
 
   app.on("before-quit", () => {
+    if (sessionSaveTimer) clearTimeout(sessionSaveTimer);
+    savePrimarySessionSync();
     bridgeServer?.close();
     void unlink(bridgeFile).catch(() => {});
   });
