@@ -5,6 +5,9 @@ contextBridge.exposeInMainWorld("egoLite", {
   back: () => ipcRenderer.invoke("ego-lite:back"),
   forward: () => ipcRenderer.invoke("ego-lite:forward"),
   reload: () => ipcRenderer.invoke("ego-lite:reload"),
+  listTabs: () => ipcRenderer.invoke("ego-lite:list-tabs"),
+  activateTab: (targetId) =>
+    ipcRenderer.invoke("ego-lite:activate-tab", targetId),
   getBrowserState: () => ipcRenderer.invoke("ego-lite:browser-state"),
   onBrowserState: (callback) => {
     const listener = (_event, state) => callback(state);

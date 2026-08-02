@@ -69,14 +69,31 @@ function normalizeUrl(value) {
   return url.toString();
 }
 
+function managedTabState() {
+  return [...managedViews.entries()].map(([targetId, managed]) => ({
+    targetId,
+    spaceId: managed.spaceId,
+    spaceName: managed.spaceName || null,
+    url: managed.view.webContents.getURL() || "about:blank",
+    title: managed.view.webContents.getTitle() || "",
+    active: managed.view === browserView,
+  }));
+}
+
+function currentBrowserState() {
+  return {
+    title: browserView?.webContents.getTitle() || "ego lite",
+    url: browserView?.webContents.getURL() || "about:blank",
+    canGoBack: browserView?.webContents.navigationHistory.canGoBack() || false,
+    canGoForward:
+      browserView?.webContents.navigationHistory.canGoForward() || false,
+    tabs: managedTabState(),
+  };
+}
+
 function publishBrowserState() {
   if (!mainWindow || mainWindow.isDestroyed() || !browserView) return;
-  mainWindow.webContents.send("ego-lite:browser-state", {
-    title: browserView.webContents.getTitle() || "ego lite",
-    url: browserView.webContents.getURL() || "about:blank",
-    canGoBack: browserView.webContents.navigationHistory.canGoBack(),
-    canGoForward: browserView.webContents.navigationHistory.canGoForward(),
-  });
+  mainWindow.webContents.send("ego-lite:browser-state", currentBrowserState());
 }
 
 function resizeBrowserView() {
@@ -125,9 +142,7 @@ function installViewListeners(view) {
     "did-navigate-in-page",
     "page-title-updated",
   ]) {
-    view.webContents.on(eventName, () => {
-      if (view === browserView) publishBrowserState();
-    });
+    view.webContents.on(eventName, publishBrowserState);
   }
 }
 
@@ -277,16 +292,21 @@ function applyPermissionCommand({ targetId, method, params = {} }) {
 
 async function registerManagedView(
   view,
-  { spaceId = null, tabId = null } = {},
+  { spaceId = null, spaceName = null, tabId = null } = {},
 ) {
   installViewListeners(view);
   installPermissionHandlers(view.webContents.session);
   const targetId = await targetIdForView(view);
-  managedViews.set(targetId, { view, spaceId, tabId });
+  managedViews.set(targetId, { view, spaceId, spaceName, tabId });
+  publishBrowserState();
   return targetId;
 }
 
-async function createManagedView({ spaceId, url = "about:blank" }) {
+async function createManagedView({
+  spaceId,
+  spaceName = null,
+  url = "about:blank",
+}) {
   const partition = `persist:ego-lite-${String(spaceId).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
   const view = new BrowserView({
     webPreferences: {
@@ -304,8 +324,7 @@ async function createManagedView({ spaceId, url = "about:blank" }) {
     return { action: "deny" };
   });
   await view.webContents.loadURL(normalizeUrl(url));
-  const targetId = await registerManagedView(view, { spaceId });
-  setActiveBrowserView(view);
+  const targetId = await registerManagedView(view, { spaceId, spaceName });
   return { targetId };
 }
 
@@ -324,6 +343,7 @@ async function closeManagedView(targetId) {
     if (fallback) setActiveBrowserView(fallback);
   }
   managed.view.webContents.close();
+  publishBrowserState();
   return { closed: true };
 }
 
@@ -354,15 +374,7 @@ async function handleBridgeRequest(pathname, body) {
   if (pathname === "/close-tab") return closeManagedView(body.targetId);
   if (pathname === "/permissions") return applyPermissionCommand(body);
   if (pathname === "/tabs") {
-    return {
-      tabs: [...managedViews.entries()].map(([targetId, managed]) => ({
-        targetId,
-        spaceId: managed.spaceId,
-        url: managed.view.webContents.getURL(),
-        title: managed.view.webContents.getTitle(),
-        active: managed.view === browserView,
-      })),
-    };
+    return { tabs: managedTabState() };
   }
   throw new Error(`unknown Electron bridge path: ${pathname}`);
 }
@@ -468,13 +480,14 @@ ipcMain.handle("ego-lite:forward", () => {
   }
 });
 ipcMain.handle("ego-lite:reload", () => browserView?.webContents.reload());
-ipcMain.handle("ego-lite:browser-state", () => ({
-  title: browserView?.webContents.getTitle() || "ego lite",
-  url: browserView?.webContents.getURL() || "about:blank",
-  canGoBack: browserView?.webContents.navigationHistory.canGoBack() || false,
-  canGoForward:
-    browserView?.webContents.navigationHistory.canGoForward() || false,
-}));
+ipcMain.handle("ego-lite:list-tabs", () => managedTabState());
+ipcMain.handle("ego-lite:activate-tab", (_event, targetId) => {
+  const managed = managedViews.get(targetId);
+  if (!managed) throw new Error(`Electron target not found: ${targetId}`);
+  setActiveBrowserView(managed.view);
+  return managedTabState();
+});
+ipcMain.handle("ego-lite:browser-state", () => currentBrowserState());
 
 const hasSingleInstance = app.requestSingleInstanceLock();
 if (!hasSingleInstance) {

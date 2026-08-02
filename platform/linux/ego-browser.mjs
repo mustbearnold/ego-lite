@@ -422,8 +422,12 @@ class LinuxEgoHost {
     this.selectedSpaceId = space.id;
     await this.ensureSpaceContext(space);
     const tabs = (await this.listTabs()).tabs;
-    this.selectedTargetId =
-      tabs.find((tab) => tab.active)?.targetId || tabs[0]?.targetId || null;
+    if (
+      !this.selectedTargetId ||
+      !tabs.some((tab) => tab.targetId === this.selectedTargetId)
+    ) {
+      this.selectedTargetId = tabs[0]?.targetId || null;
+    }
     return { ...space };
   }
 
@@ -791,6 +795,7 @@ class LinuxEgoHost {
       }
       return this.electronBridge.request("/create-tab", {
         spaceId: space?.id ?? null,
+        spaceName: space?.name ?? null,
         url,
       });
     }
@@ -802,12 +807,7 @@ class LinuxEgoHost {
 
   async activateTarget(targetId) {
     if (this.isElectron) {
-      if (!this.electronBridge) {
-        fail(
-          "Electron bridge is unavailable. Restart the ego lite Electron app before activating tabs.",
-        );
-      }
-      await this.electronBridge.request("/activate-tab", { targetId });
+      this.selectedTargetId = targetId;
       return;
     }
     await this.connection.request("Target.activateTarget", { targetId });

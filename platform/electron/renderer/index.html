@@ -72,6 +72,18 @@
         padding: 0 10px;
       }
 
+      select {
+        background: #1f2937;
+        border: 1px solid #4b5563;
+        border-radius: 6px;
+        color: #e5e7eb;
+        font-size: 13px;
+        height: 34px;
+        max-width: 260px;
+        min-width: 150px;
+        padding: 0 8px;
+      }
+
       #status {
         color: #9ca3af;
         font-size: 12px;
@@ -96,6 +108,7 @@
           value="about:blank"
         />
       </form>
+      <select id="tab-picker" aria-label="Open tab"></select>
       <span id="status">ready</span>
     </div>
     <script>
@@ -103,12 +116,35 @@
       const status = document.querySelector("#status");
       const back = document.querySelector("#back");
       const forward = document.querySelector("#forward");
+      const tabPicker = document.querySelector("#tab-picker");
+
+      function tabLabel(tab) {
+        const space =
+          tab.spaceId === null
+            ? "Your tab"
+            : tab.spaceName || `Space ${tab.spaceId}`;
+        const location = tab.title || tab.url || "New tab";
+        return `${space} — ${location}`;
+      }
+
+      function applyTabs(tabs = []) {
+        tabPicker.replaceChildren();
+        for (const tab of tabs) {
+          const option = document.createElement("option");
+          option.value = tab.targetId;
+          option.textContent = tabLabel(tab);
+          option.selected = Boolean(tab.active);
+          tabPicker.append(option);
+        }
+        tabPicker.disabled = tabs.length < 2;
+      }
 
       function applyState(state) {
         address.value = state.url || "about:blank";
         status.textContent = state.title || "ego lite";
         back.disabled = !state.canGoBack;
         forward.disabled = !state.canGoForward;
+        applyTabs(state.tabs);
       }
 
       document
@@ -123,6 +159,14 @@
         });
       back.addEventListener("click", () => window.egoLite.back());
       forward.addEventListener("click", () => window.egoLite.forward());
+      tabPicker.addEventListener("change", async () => {
+        try {
+          const tabs = await window.egoLite.activateTab(tabPicker.value);
+          applyTabs(tabs);
+        } catch (error) {
+          status.textContent = error.message;
+        }
+      });
       document
         .querySelector("#reload")
         .addEventListener("click", () => window.egoLite.reload());
