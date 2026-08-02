@@ -346,6 +346,7 @@ function setActiveBrowserView(view) {
   browserView = view;
   mainWindow.setBrowserView(view);
   resizeBrowserView();
+  view.webContents.focus();
   publishBrowserState();
 }
 
@@ -373,6 +374,26 @@ function installViewListeners(view) {
   ]) {
     view.webContents.on(eventName, publishBrowserState);
   }
+  view.webContents.on("before-input-event", (event, input) => {
+    if (input.type !== "keyDown" || input.isAutoRepeat) return;
+    if (input.alt || input.shift || !(input.control || input.meta)) return;
+    const key = String(input.key || "").toLowerCase();
+    if (key === "t") {
+      event.preventDefault();
+      void createUserTab().catch((error) => {
+        console.error(
+          `[ego-lite] could not create shortcut tab: ${error?.message || String(error)}`,
+        );
+      });
+    } else if (key === "w") {
+      event.preventDefault();
+      void closeActiveTab().catch((error) => {
+        console.error(
+          `[ego-lite] could not close shortcut tab: ${error?.message || String(error)}`,
+        );
+      });
+    }
+  });
 }
 
 function enableAccessibility(view) {

@@ -42,7 +42,7 @@ The toolbar’s Import button provides the repeatable Settings → Import data p
 
 Agent-created task tabs stay in the background by default, so creating or navigating a Space does not replace the user’s visible tab. Use the toolbar’s tab picker to inspect or reveal a Space explicitly.
 
-The Electron toolbar also provides New tab and Close tab controls, with Ctrl/Cmd+T and Ctrl/Cmd+W shortcuts; closing the final primary tab keeps one blank replacement tab available.
+The Electron toolbar also provides New tab and Close tab controls, with Ctrl/Cmd+T and Ctrl/Cmd+W shortcuts from either the toolbar or the focused page; closing the final primary tab keeps one blank replacement tab available.
 
 When a Space is revealed, the toolbar’s live control badge reports whether the Space is under agent or user control; it follows the ownership state written by the SDK’s handoff and takeover methods.
 
@@ -100,7 +100,7 @@ The detached Import data probe clicks the toolbar control through renderer CDP, 
 npm run test:import-data
 ```
 
-The detached tab-control probe verifies button actions, keyboard shortcuts, active-tab fallback, and the toolbar DOM:
+The detached tab-control probe verifies button actions, toolbar keyboard shortcuts, active-tab fallback, and the toolbar DOM:
 
 ```bash
 npm run test:tab-controls
