@@ -48,6 +48,8 @@ ego-lite --migrate-profile --from "$HOME/.config/google-chrome"
 
 `--from` accepts a Chromium/Chrome/Brave user-data directory or a specific profile directory such as `.../Default`. The migration backs up replaced ego lite data, copies bookmarks, settings, extensions, local storage, and related browser databases, transfers readable cookies through a temporary CDP session, and records restorable HTTP(S) tabs plus tab-group metadata in `ego-lite-migrated-tabs.json`. Passwords are not copied because Chrome's encrypted keyring is separate and must not be transplanted blindly. If `--from` is omitted, the host auto-detects a single supported Chromium-family profile.
 
+The Electron package also exposes the same migration from its toolbar Import button. That path queues the selected source, restarts the package before copying profile data, and retains the target backup if existing files are replaced.
+
 ## Compatibility boundary
 
 The helper SDK, CDP transport, task-space ownership methods, screenshots, downloads, uploads, locators, and semantic refs are shared with the macOS runtime. Snapshots are rendered from Chromium's `Accessibility.getFullAXTree`; Linux honors full-page versus viewport scope, action marks, stable role locators, and result limits, while wording and coverage can still differ from the macOS app's custom snapshot engine.

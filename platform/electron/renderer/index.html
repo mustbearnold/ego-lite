@@ -108,6 +108,9 @@
           value="about:blank"
         />
       </form>
+      <button id="import-data" type="button" title="Import browser data">
+        Import
+      </button>
       <select id="tab-picker" aria-label="Open tab"></select>
       <span id="status">ready</span>
     </div>
@@ -116,6 +119,7 @@
       const status = document.querySelector("#status");
       const back = document.querySelector("#back");
       const forward = document.querySelector("#forward");
+      const importData = document.querySelector("#import-data");
       const tabPicker = document.querySelector("#tab-picker");
 
       function tabLabel(tab) {
@@ -184,6 +188,20 @@
       document
         .querySelector("#reload")
         .addEventListener("click", () => window.egoLite.reload());
+      importData.addEventListener("click", async () => {
+        importData.disabled = true;
+        status.textContent = "choose browser profile…";
+        try {
+          const result = await window.egoLite.importData();
+          if (result?.cancelled) status.textContent = "import cancelled";
+        } catch (error) {
+          importData.disabled = false;
+          status.textContent = error.message;
+        }
+      });
+      window.egoLite.onImportStatus((value) => {
+        if (value?.state === "restarting") status.textContent = "restarting…";
+      });
       window.egoLite.onBrowserState(applyState);
       window.egoLite.getBrowserState().then(applyState);
     </script>

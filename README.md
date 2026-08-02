@@ -52,7 +52,7 @@ sh skills/ego-browser/scripts/install.sh
 
 The installer builds the SDK, installs a user-local host under `~/.local/share/ego-lite`, adds `ego-browser` and `ego-lite` to `~/.local/bin`, and registers a desktop launcher. On an interactive first install it offers to migrate one detected Chromium-family profile before launch; use `EGO_LITE_SKIP_MIGRATION=1` for unattended setup. Use `EGO_LITE_HEADLESS=1` for CI or a headless machine. See [`platform/linux/README.md`](platform/linux/README.md) for Linux-specific behavior and environment variables.
 
-For a self-contained desktop package with embedded Chromium, run `npm install` and `npm run package:linux` from [`platform/electron/`](platform/electron/). This builds an AppImage, Debian package, and RPM; the packaged executable accepts `--cli`, includes the Linux host, SDK, and skill resources, offers one-time first-launch migration when it finds exactly one usable Chromium-family profile, and persists primary tabs across restarts.
+For a self-contained desktop package with embedded Chromium, run `npm install` and `npm run package:linux` from [`platform/electron/`](platform/electron/). This builds an AppImage, Debian package, and RPM; the packaged executable accepts `--cli`, includes the Linux host, SDK, and skill resources, offers one-time first-launch migration when it finds exactly one usable Chromium-family profile, persists primary tabs across restarts, and exposes toolbar Import data for a later migration.
 
 **1.3 Add the skill with npx**
 
@@ -74,7 +74,7 @@ Set up ego lite for me: https://github.com/mustbearnold/ego-lite-linux
 Read `skills/ego-browser/references/install.md` and follow the steps to install ego lite.
 ```
 
-On first macOS launch, ego lite asks whether to migrate your Chrome data. The Linux host uses its own persistent Chromium profile under `~/.local/share/ego-lite/chromium-profile`; run `ego-lite --migrate-profile --from "$HOME/.config/google-chrome"` before first use if you want to bring across portable browser data, cookies, and restorable HTTP(S) tabs/tab groups, then log in there once for anything not migrated. Browser-internal pages and encrypted passwords remain separate.
+On first macOS launch, ego lite asks whether to migrate your Chrome data. The Linux host uses its own persistent Chromium profile under `~/.local/share/ego-lite/chromium-profile`; run `ego-lite --migrate-profile --from "$HOME/.config/google-chrome"` before first use if you want to bring across portable browser data, cookies, and restorable HTTP(S) tabs/tab groups, then log in there once for anything not migrated. In the Electron package, use the toolbar’s Import button to repeat that migration later; the app restarts safely around the import and preserves a backup of replaced target data. Browser-internal pages and encrypted passwords remain separate.
 
 ### 2. Run your first task
 

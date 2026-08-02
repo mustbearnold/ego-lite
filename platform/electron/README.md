@@ -38,6 +38,8 @@ The package includes the Linux host, built SDK, and `ego-browser` skill under it
 
 On the first packaged-app launch, when exactly one supported Chromium-family profile is found and the ego lite profile is still empty, a one-time migration prompt offers to copy portable browser data before the browser window opens. Set `EGO_LITE_SKIP_MIGRATION=1` for unattended launches; choosing to keep profiles separate records the decision in the target profile. Saved passwords remain excluded from migration.
 
+The toolbar’s Import button provides the repeatable Settings → Import data path. It opens a directory chooser for a Chromium-family user-data directory or profile, saves the request, restarts the app, performs the guarded migration before the new window opens, restores imported HTTP(S) tabs and groups, and backs up replaced target data. Close the source browser first; saved passwords remain excluded.
+
 Agent-created task tabs stay in the background by default, so creating or navigating a Space does not replace the user’s visible tab. Use the toolbar’s tab picker to inspect or reveal a Space explicitly.
 
 Labeled pointer actions from the SDK update the local toolbar task status and briefly draw a pointer ring in the selected page. The DOM probe checks both effects without opening a foreground window:
@@ -74,6 +76,12 @@ The Electron shell also persists its primary tabs and active tab across a restar
 
 ```bash
 npm run test:session-restore
+```
+
+The detached Import data probe clicks the toolbar control through renderer CDP, verifies restart-safe profile migration and backup preservation, and checks the control after relaunch:
+
+```bash
+npm run test:import-data
 ```
 
 The migration-discovery probe verifies that onboarding selects only one usable supported profile and refuses to guess when multiple profiles are available:

@@ -70,7 +70,10 @@ const MIGRATION_PROMPT_MARKER = join(PROFILE_DIR, ".migration-prompted");
 const MIGRATED_TABS_FILE = "ego-lite-migrated-tabs.json";
 const PRIMARY_SESSION_FILE = "ego-lite-session.json";
 const PRIMARY_SESSION_PATH = join(PROFILE_DIR, PRIMARY_SESSION_FILE);
+const PENDING_IMPORT_FILE = "ego-lite-pending-import.json";
+const PENDING_IMPORT_PATH = join(PROFILE_DIR, PENDING_IMPORT_FILE);
 let sessionSaveTimer;
+let importRequestPending = false;
 
 const permissionAliases = {
   clipboardReadWrite: ["clipboard-read", "clipboard-sanitized-write"],
@@ -756,6 +759,38 @@ async function readPrimarySessionManifest() {
   return readStoredTabsManifest(PRIMARY_SESSION_PATH);
 }
 
+async function writePendingProfileImport(sourcePath) {
+  const temporaryPath = `${PENDING_IMPORT_PATH}.${process.pid}.tmp`;
+  await writeFile(
+    temporaryPath,
+    `${JSON.stringify({ version: 1, sourcePath, requestedAt: new Date().toISOString() }, null, 2)}\n`,
+  );
+  await rename(temporaryPath, PENDING_IMPORT_PATH);
+}
+
+async function takePendingProfileImport() {
+  let request;
+  try {
+    request = JSON.parse(await readFile(PENDING_IMPORT_PATH, "utf8"));
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      console.warn(
+        `[ego-lite] could not read pending profile import: ${error?.message || String(error)}`,
+      );
+    }
+    return null;
+  }
+  await unlink(PENDING_IMPORT_PATH).catch(() => {});
+  if (request?.version !== 1 || typeof request.sourcePath !== "string") {
+    console.warn("[ego-lite] ignoring an unsupported pending profile import");
+    return null;
+  }
+  const rawSourcePath = request.sourcePath.trim();
+  if (!rawSourcePath) return null;
+  const sourcePath = resolve(rawSourcePath);
+  return { sourcePath };
+}
+
 async function createPrimaryBrowserView({
   url = "about:blank",
   tabId = null,
@@ -877,6 +912,83 @@ async function runPackagedCli() {
   app.exit(Number.isInteger(exitCode) ? exitCode : 0);
 }
 
+async function runPendingProfileImport() {
+  const pending = await takePendingProfileImport();
+  if (!pending) return { stopped: false };
+
+  app.releaseSingleInstanceLock();
+  let exitCode = 1;
+  let failure;
+  const previousSelfMigrationFlag =
+    process.env.EGO_LITE_ALLOW_SELF_ELECTRON_MIGRATION;
+  process.env.EGO_LITE_ALLOW_SELF_ELECTRON_MIGRATION = "1";
+  try {
+    exitCode = await runHostCommand([
+      "--migrate-profile",
+      "--from",
+      pending.sourcePath,
+    ]);
+  } catch (error) {
+    failure = error;
+    console.error(
+      `[ego-lite] requested profile import failed: ${error?.stack || error?.message || String(error)}`,
+    );
+  } finally {
+    if (previousSelfMigrationFlag === undefined) {
+      delete process.env.EGO_LITE_ALLOW_SELF_ELECTRON_MIGRATION;
+    } else {
+      process.env.EGO_LITE_ALLOW_SELF_ELECTRON_MIGRATION =
+        previousSelfMigrationFlag;
+    }
+  }
+
+  const reacquired = app.requestSingleInstanceLock();
+  if (!reacquired) {
+    app.quit();
+    return { stopped: true };
+  }
+  if (failure || exitCode !== 0) {
+    await dialog.showMessageBox({
+      type: "warning",
+      title: "Browser data import did not finish",
+      message: "ego lite will start with the existing Linux profile.",
+      detail:
+        "Close the source browser and use Import data again to retry. Saved passwords are not copied.",
+      buttons: ["Continue"],
+    });
+  }
+  return { stopped: false };
+}
+
+async function requestProfileImport() {
+  if (importRequestPending) return { restarting: true };
+  const forcedSource = process.env.EGO_LITE_IMPORT_SOURCE?.trim();
+  let sourcePath = forcedSource ? resolve(forcedSource) : null;
+  if (!sourcePath) {
+    const selection = await dialog.showOpenDialog(mainWindow, {
+      title: "Import browser data",
+      buttonLabel: "Import",
+      properties: ["openDirectory"],
+      message:
+        "Choose a Chromium, Chrome, or Brave profile or its browser data directory.",
+    });
+    if (selection.canceled || selection.filePaths.length === 0) {
+      return { cancelled: true };
+    }
+    sourcePath = resolve(selection.filePaths[0]);
+  }
+
+  importRequestPending = true;
+  await savePrimarySession();
+  await writePendingProfileImport(sourcePath);
+  mainWindow?.webContents.send("ego-lite:import-status", {
+    state: "restarting",
+  });
+  app.relaunch();
+  app.exit(0);
+  return { restarting: true };
+}
+
 async function maybeOfferPackagedMigration() {
   const promptEnabled =
     app.isPackaged || process.env.EGO_LITE_MIGRATION_PROMPT === "1";
@@ -980,6 +1092,7 @@ ipcMain.handle("ego-lite:forward", () => {
   }
 });
 ipcMain.handle("ego-lite:reload", () => browserView?.webContents.reload());
+ipcMain.handle("ego-lite:import-data", () => requestProfileImport());
 ipcMain.handle("ego-lite:list-tabs", () => managedTabState());
 ipcMain.handle("ego-lite:activate-tab", (_event, targetId) => {
   const managed = managedViews.get(targetId);
@@ -1003,6 +1116,13 @@ if (!hasSingleInstance) {
 
   app.whenReady().then(async () => {
     if (!CLI_MODE) {
+      const pendingImport = await runPendingProfileImport().catch((error) => {
+        console.error(
+          `[ego-lite] pending profile import failed: ${error?.stack || error?.message || String(error)}`,
+        );
+        return { stopped: false };
+      });
+      if (pendingImport.stopped) return;
       const migration = await maybeOfferPackagedMigration().catch((error) => {
         console.error(
           `[ego-lite] migration onboarding failed: ${error?.stack || error?.message || String(error)}`,
