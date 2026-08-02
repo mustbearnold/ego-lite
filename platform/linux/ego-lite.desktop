@@ -2,9 +2,10 @@
 Type=Application
 Name=ego lite
 Comment=Chromium browser for human and AI-agent workflows
-Exec="@EGO_LITE_EXEC@" --launch
+Exec="@EGO_LITE_EXEC@" --launch %U
 Icon=@EGO_LITE_ICON@
 Terminal=false
 Categories=Network;WebBrowser;
 StartupNotify=true
-StartupWMClass=chromium
+StartupWMClass=ego-lite
+MimeType=text/html;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/file;

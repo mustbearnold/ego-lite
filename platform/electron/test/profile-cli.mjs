@@ -39,6 +39,10 @@ function runCli() {
     EGO_LITE_DISABLE_GPU: "1",
     EGO_LITE_SKIP_MIGRATION: "1",
     EGO_LITE_DISABLE_AUTO_UPDATE: "1",
+    ELECTRON_DISABLE_SANDBOX: "1",
+    ELECTRON_OZONE_PLATFORM_HINT: "x11",
+    WAYLAND_DISPLAY: "",
+    XDG_SESSION_TYPE: "x11",
   });
 
   const child = spawn(electronPath, electronArguments, {

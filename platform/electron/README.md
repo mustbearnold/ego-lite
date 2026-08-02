@@ -36,6 +36,18 @@ The RPM target requires `rpmbuild`: install `rpm-tools` on Arch-based systems or
 
 The package includes the Linux host, built SDK, and `ego-browser` skill under its resources. Sign in through the primary visible tab; each new task Space starts with a cookie snapshot from that session, then keeps its own persistent cookie jar. The packaged executable also accepts `--cli`, so a smoke check can use `ego-lite --cli --doctor` or run the SDK through `ego-lite --cli nodejs`. Linux artifacts are written to `platform/electron/dist/`.
 
+Desktop launches accept HTTP(S) URLs and local files. The packaged executable can
+open one or more targets with `ego-lite --launch https://example.com
+/absolute/path/to/page.html`; the Linux desktop entry passes `%U`, and the
+single-instance bridge routes later desktop opens into new primary tabs while
+activating the last target. The package registers the HTTP, HTTPS, file, HTML,
+and XHTML associations through electron-builder. The detached initial-argument
+and second-instance probe covers URL and local-file routing:
+
+```bash
+npm run test:external-routing
+```
+
 The packaged app shows a one-time local welcome page on an empty first launch with the browser and agent connection basics. It records completion in the active profile; set `EGO_LITE_SKIP_MIGRATION=1` for unattended launches, or `EGO_LITE_DISABLE_WELCOME=1` to suppress the page explicitly. The detached DOM probe covers the page and its completion action:
 
 ```bash

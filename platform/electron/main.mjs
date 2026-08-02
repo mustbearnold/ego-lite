@@ -55,6 +55,7 @@ import {
 import { createUpdateController } from "./update.mjs";
 
 const MAIN_DIR = dirname(fileURLToPath(import.meta.url));
+const ELECTRON_ENTRY_ARGUMENT = process.argv[1] || "";
 const WELCOME_URL = pathToFileURL(
   join(MAIN_DIR, "renderer", "welcome.html"),
 ).toString();
@@ -261,6 +262,84 @@ function normalizeUrl(value) {
   }
   return url.toString();
 }
+
+const EXTERNAL_TARGET_PROTOCOLS = new Set(["file:", "http:", "https:"]);
+const EXTERNAL_ARGUMENT_FLAGS_WITH_VALUES = new Set([
+  "--from",
+  "--profile",
+  "--sdk-path",
+  "--server-name",
+]);
+
+function normalizeExternalTarget(value, cwd = process.cwd()) {
+  const input = String(value || "").trim();
+  if (!input) return null;
+  if (/^[a-z][a-z\d+.-]*:/i.test(input)) {
+    try {
+      const url = new URL(input);
+      return EXTERNAL_TARGET_PROTOCOLS.has(url.protocol)
+        ? url.toString()
+        : null;
+    } catch {
+      return null;
+    }
+  }
+  if (
+    !input.startsWith("/") &&
+    !input.startsWith("./") &&
+    !input.startsWith("../")
+  ) {
+    return null;
+  }
+  return pathToFileURL(resolve(cwd, input)).toString();
+}
+
+function isElectronApplicationArgument(value) {
+  const input = String(value || "");
+  const resolvedInput = resolve(input);
+  const resolvedEntry = ELECTRON_ENTRY_ARGUMENT
+    ? resolve(ELECTRON_ENTRY_ARGUMENT)
+    : null;
+  return (
+    input === MAIN_DIR ||
+    input === "." ||
+    input === "platform/electron" ||
+    resolvedInput === MAIN_DIR ||
+    resolvedInput === resolvedEntry ||
+    input === process.execPath ||
+    input === ELECTRON_ENTRY_ARGUMENT
+  );
+}
+
+function externalTargetsFromArguments(argv, cwd = process.cwd()) {
+  const targets = [];
+  let endOfOptions = false;
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = String(argv[index] || "").trim();
+    if (!argument) continue;
+    // Electron's second-instance command line starts with the executable path;
+    // it is not necessarily equal to process.execPath in the first instance.
+    if (index === 0) continue;
+    if (isElectronApplicationArgument(argument)) continue;
+    if (!endOfOptions && argument === "--") {
+      endOfOptions = true;
+      continue;
+    }
+    if (!endOfOptions && EXTERNAL_ARGUMENT_FLAGS_WITH_VALUES.has(argument)) {
+      index += 1;
+      continue;
+    }
+    if (!endOfOptions && argument.startsWith("-")) continue;
+    const target = normalizeExternalTarget(argument, cwd);
+    if (target) targets.push(target);
+  }
+  return targets;
+}
+
+const INITIAL_EXTERNAL_TARGETS = CLI_MODE
+  ? []
+  : externalTargetsFromArguments(process.argv);
+let pendingExternalTargets = [...INITIAL_EXTERNAL_TARGETS];
 
 function isDefaultBrowser() {
   if (process.env.EGO_LITE_DEFAULT_BROWSER === "1") return true;
@@ -1301,11 +1380,25 @@ function installViewListeners(view) {
   view.webContents.on("before-input-event", (event, input) => {
     if (input.type !== "keyDown" || input.isAutoRepeat) return;
     const rawKey = String(input.key || "");
+    const normalizedKey = rawKey.toLowerCase();
+    if (normalizedKey === "f12") {
+      event.preventDefault();
+      toggleDevTools(view);
+      return;
+    }
     if (rawKey.toLowerCase() === "f11") {
       event.preventDefault();
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.setFullScreen(!mainWindow.isFullScreen());
       }
+      return;
+    }
+    if (
+      (input.control && input.shift && normalizedKey === "i") ||
+      (input.meta && input.alt && normalizedKey === "i")
+    ) {
+      event.preventDefault();
+      toggleDevTools(view);
       return;
     }
     if (input.alt || !(input.control || input.meta)) return;
@@ -1831,6 +1924,39 @@ async function navigateOnView(view, value) {
   return url;
 }
 
+async function routeExternalTargets(
+  values,
+  { cwd = process.cwd(), commandLine = false } = {},
+) {
+  const targets = commandLine
+    ? externalTargetsFromArguments(values, cwd)
+    : values.map((value) => normalizeExternalTarget(value, cwd)).filter(Boolean);
+  if (targets.length === 0) return [];
+  if (!mainWindow || mainWindow.isDestroyed() || !browserView) {
+    pendingExternalTargets.push(...targets);
+    return targets;
+  }
+
+  const opened = [];
+  for (const target of targets) {
+    const active = managedRecordForView(browserView);
+    if (
+      opened.length === 0 &&
+      active?.spaceId === null &&
+      !active.private &&
+      browserView.webContents.getURL() === "about:blank"
+    ) {
+      await navigateOnView(browserView, target);
+    } else {
+      const primary = await createPrimaryBrowserView({ url: target });
+      setActiveBrowserView(primary.view);
+    }
+    opened.push(target);
+  }
+  publishBrowserState();
+  return opened;
+}
+
 async function closeManagedView(targetId) {
   const managed = managedViews.get(targetId);
   if (!managed) return { closed: false };
@@ -2322,9 +2448,10 @@ async function readPrimarySessionManifest() {
   return readStoredTabsManifest(PRIMARY_SESSION_PATH);
 }
 
-async function shouldShowWelcome({ restoredTabs, migrated }) {
+async function shouldShowWelcome({ restoredTabs, migrated, externalTargets = [] }) {
   if (process.env.EGO_LITE_DISABLE_WELCOME === "1") return false;
   const explicitlyRequested = process.env.EGO_LITE_SHOW_WELCOME === "1";
+  if (externalTargets.length > 0 && !explicitlyRequested) return false;
   if (!app.isPackaged && !explicitlyRequested) return false;
   if (!explicitlyRequested && process.env.EGO_LITE_SKIP_MIGRATION === "1") {
     return false;
@@ -2464,7 +2591,11 @@ async function createWindow() {
   const windowState = readWindowState();
   const stored = migrated || persisted;
   const restoredTabs = stored?.tabs || [];
-  const showWelcome = await shouldShowWelcome({ restoredTabs, migrated });
+  const showWelcome = await shouldShowWelcome({
+    restoredTabs,
+    migrated,
+    externalTargets: pendingExternalTargets,
+  });
   if (showWelcome) markWelcomeSeen();
   mainWindow = new BrowserWindow({
     width: windowState?.width || WINDOW_DEFAULT_WIDTH,
@@ -2616,9 +2747,16 @@ async function runHostCommand(args) {
 
 async function runPackagedCli() {
   const hostArguments = [];
-  for (let index = 2; index < process.argv.length; index += 1) {
-    const argument = process.argv[index];
-    if (argument === "--cli") continue;
+  for (let index = 1; index < process.argv.length; index += 1) {
+    const argument = String(process.argv[index] || "");
+    if (
+      !argument ||
+      argument === "--" ||
+      argument === "--cli" ||
+      isElectronApplicationArgument(argument)
+    ) {
+      continue;
+    }
     if (argument === "--profile") {
       index += 1;
       continue;
@@ -2950,11 +3088,25 @@ const hasSingleInstance =
 if (!hasSingleInstance) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
+  app.on("open-file", (event, filePath) => {
+    event.preventDefault();
+    void routeExternalTargets([filePath]);
+  });
+
+  app.on("open-url", (event, url) => {
+    event.preventDefault();
+    void routeExternalTargets([url]);
+  });
+
+  app.on("second-instance", (_event, commandLine, workingDirectory) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
     }
+    void routeExternalTargets(commandLine, {
+      cwd: workingDirectory,
+      commandLine: true,
+    });
   });
 
   app.whenReady().then(async () => {
@@ -2989,6 +3141,9 @@ if (!hasSingleInstance) {
     }
     await createWindow();
     await startBridge();
+    const initialExternalTargets = pendingExternalTargets;
+    pendingExternalTargets = [];
+    await routeExternalTargets(initialExternalTargets);
     if (!CLI_MODE) {
       void runBrowserDataSync();
       browserDataSyncTimer = setInterval(

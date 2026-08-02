@@ -13,6 +13,11 @@ const environment = {
   EGO_LITE_PROFILE_DIR: profileDir,
   EGO_LITE_STATE_PATH: join(profileDir, "task-spaces.json"),
   EGO_LITE_DISABLE_GPU: "1",
+  EGO_LITE_DISABLE_AUTO_UPDATE: "1",
+  ELECTRON_DISABLE_SANDBOX: "1",
+  ELECTRON_OZONE_PLATFORM_HINT: "x11",
+  WAYLAND_DISPLAY: "",
+  XDG_SESSION_TYPE: "x11",
 };
 
 const child = spawn(electronPath, ["platform/electron"], {
@@ -184,6 +189,14 @@ try {
       const result = await bridgeRequest(bridge, "/tabs");
       return result.tabs?.find((tab) => tab.spaceId === null) || null;
     });
+    const agentTab = await bridgeRequest(bridge, "/create-tab", {
+      spaceId: 1,
+      spaceName: "inspect parity state",
+      url: "about:blank",
+    });
+    await bridgeRequest(bridge, "/activate-tab", {
+      targetId: agentTab.targetId,
+    });
     const shellTarget = await waitFor("Electron toolbar", async () => {
       const result = await connection.request("Target.getTargets");
       const target = result.targetInfos?.find(
@@ -202,6 +215,7 @@ try {
 
     const state = await bridgeRequest(bridge, "/agent-state", {
       label: "inspect parity state",
+      spaceId: 1,
     });
     const queriedBrowserState = await evaluate(
       connection,

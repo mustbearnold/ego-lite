@@ -24,6 +24,11 @@ const environment = {
     process.env.EGO_LITE_TEST_MIGRATION_CHOICE || "skip",
   EGO_LITE_MIGRATION_SOURCE: multiProfile ? selectedProfile : "",
   XDG_CONFIG_HOME: join(root, "config"),
+  EGO_LITE_DISABLE_AUTO_UPDATE: "1",
+  ELECTRON_DISABLE_SANDBOX: "1",
+  ELECTRON_OZONE_PLATFORM_HINT: "x11",
+  WAYLAND_DISPLAY: "",
+  XDG_SESSION_TYPE: "x11",
 };
 
 const child = spawn(electronPath, ["platform/electron"], {

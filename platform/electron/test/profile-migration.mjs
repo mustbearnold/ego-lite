@@ -180,6 +180,9 @@ async function runMigration() {
       EGO_LITE_PROFILE_DIR: targetUserData,
       EGO_LITE_STATE_PATH: statePath,
       EGO_BROWSER_EXECUTABLE: executable,
+      ELECTRON_OZONE_PLATFORM_HINT: "x11",
+      WAYLAND_DISPLAY: "",
+      XDG_SESSION_TYPE: "x11",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

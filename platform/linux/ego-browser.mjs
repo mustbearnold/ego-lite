@@ -78,6 +78,7 @@ const MIGRATED_TABS_FILE = "ego-lite-migrated-tabs.json";
 const HOST_VERSION = "linux-host/0.4.0";
 const nativeFetch = globalThis.fetch?.bind(globalThis);
 const MIGRATION_CDP_TIMEOUT_MS = 10_000;
+const BROWSER_CONNECTION_PROBE_TIMEOUT_MS = 2_000;
 const MIGRATION_COOKIE_BATCH_SIZE = 100;
 const DEFAULT_EXECUTABLES = [
   "chromium",
@@ -202,6 +203,11 @@ Environment:
   EGO_LITE_HEADLESS=1          Run Chromium headlessly (useful in CI)
   EGO_BROWSER_AGENT_WORKSPACE  Skill workspace used by the SDK
 
+Opening URLs and files:
+  ego-lite --launch https://example.com
+  ego-lite --launch /absolute/path/to/page.html
+  Multiple HTTP(S) URLs and local files may be passed together.
+
 Migration:
   --migrate-profile imports bookmarks, browser settings, extensions, local
   storage, readable cookies, restorable HTTP(S) tabs, and basic-store saved
@@ -239,34 +245,44 @@ class BrowserConnection {
     this.onEvent = () => {};
   }
 
-  async connect() {
+  async connect(timeoutMs = 0) {
     const socket = new WebSocket(this.url);
     this.socket = socket;
-    await new Promise((resolvePromise, rejectPromise) => {
-      let settled = false;
-      const resolveOnce = () => {
-        if (settled) return;
-        settled = true;
-        resolvePromise();
-      };
-      const rejectOnce = (error) => {
-        if (settled) return;
-        settled = true;
-        rejectPromise(
-          error instanceof Error ? error : new Error(String(error)),
-        );
-      };
-      socket.addEventListener("open", resolveOnce, { once: true });
-      socket.addEventListener(
-        "error",
-        (event) => {
-          rejectOnce(
-            event?.error || new Error("failed to connect to Chromium CDP"),
+    let timer;
+    try {
+      await new Promise((resolvePromise, rejectPromise) => {
+        let settled = false;
+        const resolveOnce = () => {
+          if (settled) return;
+          settled = true;
+          resolvePromise();
+        };
+        const rejectOnce = (error) => {
+          if (settled) return;
+          settled = true;
+          rejectPromise(
+            error instanceof Error ? error : new Error(String(error)),
           );
-        },
-        { once: true },
-      );
-    });
+        };
+        socket.addEventListener("open", resolveOnce, { once: true });
+        socket.addEventListener(
+          "error",
+          (event) => {
+            rejectOnce(
+              event?.error || new Error("failed to connect to Chromium CDP"),
+            );
+          },
+          { once: true },
+        );
+        if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+          timer = setTimeout(() => {
+            rejectOnce(new Error("timed out connecting to Chromium CDP"));
+          }, timeoutMs);
+        }
+      });
+    } finally {
+      clearTimeout(timer);
+    }
     socket.addEventListener("message", (event) =>
       this.handleMessage(event.data),
     );
@@ -1115,8 +1131,13 @@ class LinuxEgoHost {
 
   async activateTarget(targetId) {
     if (this.isElectron) {
+      if (!this.electronBridge) {
+        fail(
+          "Electron bridge is unavailable. Restart the ego lite Electron app before activating tabs.",
+        );
+      }
       this.selectedTargetId = targetId;
-      return;
+      return this.electronBridge.request("/activate-tab", { targetId });
     }
     await this.connection.request("Target.activateTarget", { targetId });
   }
@@ -1602,7 +1623,7 @@ async function canConnect(endpoint) {
   if (!endpoint) return false;
   const connection = new BrowserConnection(endpoint.url);
   try {
-    await connection.connect();
+    await connection.connect(BROWSER_CONNECTION_PROBE_TIMEOUT_MS);
     connection.close();
     return true;
   } catch {
@@ -1615,8 +1636,14 @@ async function isElectronEndpoint(endpoint) {
   if (!endpoint) return false;
   const connection = new BrowserConnection(endpoint.url);
   try {
-    await connection.connect();
-    const version = await connection.request("Browser.getVersion");
+    await connection.connect(BROWSER_CONNECTION_PROBE_TIMEOUT_MS);
+    const version = await migrationRequest(
+      connection,
+      "Browser.getVersion",
+      {},
+      undefined,
+      BROWSER_CONNECTION_PROBE_TIMEOUT_MS,
+    );
     return /Electron\//.test(version.userAgent || "");
   } catch {
     return false;
@@ -2439,6 +2466,31 @@ async function readStdin() {
   return source;
 }
 
+const EXTERNAL_TARGET_PROTOCOLS = new Set(["file:", "http:", "https:"]);
+
+function normalizeExternalTarget(value, cwd = process.cwd()) {
+  const input = String(value || "").trim();
+  if (!input) return null;
+  if (/^[a-z][a-z\d+.-]*:/i.test(input)) {
+    try {
+      const url = new URL(input);
+      return EXTERNAL_TARGET_PROTOCOLS.has(url.protocol)
+        ? url.toString()
+        : null;
+    } catch {
+      return null;
+    }
+  }
+  if (
+    !input.startsWith("/") &&
+    !input.startsWith("./") &&
+    !input.startsWith("../")
+  ) {
+    return null;
+  }
+  return pathToFileURL(resolve(cwd, input)).toString();
+}
+
 function parseArgs(argv) {
   const args = [...argv];
   let sdkPath;
@@ -2446,6 +2498,7 @@ function parseArgs(argv) {
   let command = "run";
   let profileId = normalizeProfileId(process.env.EGO_LITE_PROFILE_ID);
   let serverName = normalizeServerName(process.env.EGO_LITE_SERVER_NAME);
+  const externalTargets = [];
   if (args[0] === "nodejs") args.shift();
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -2481,17 +2534,57 @@ function parseArgs(argv) {
     } else if (arg === "--from") {
       migrateFrom = args[++index];
       if (!migrateFrom) fail("--from requires a path");
+    } else if (arg === "--") {
+      for (const value of args.slice(index + 1)) {
+        const target = normalizeExternalTarget(value);
+        if (!target) fail(`unknown argument: ${value}`);
+        externalTargets.push(target);
+      }
+      break;
     } else if (arg === "--help" || arg === "-h") {
       command = "help";
     } else {
-      fail(`unknown argument: ${arg}`);
+      const target = normalizeExternalTarget(arg);
+      if (!target) fail(`unknown argument: ${arg}`);
+      externalTargets.push(target);
     }
   }
-  return { command, sdkPath, migrateFrom, profileId, serverName };
+  return {
+    command,
+    sdkPath,
+    migrateFrom,
+    profileId,
+    serverName,
+    externalTargets,
+  };
+}
+
+async function openExternalTargets(host, targets) {
+  if (targets.length === 0) return { opened: 0, closedInitialBlank: false };
+  const before = await host.listTabs();
+  const created = [];
+  for (const target of targets) {
+    created.push(await host.createTab(target));
+  }
+  const initial = before.tabs?.[0];
+  const initialWasBlank =
+    before.tabs?.length === 1 &&
+    ["about:blank", "chrome://newtab/"].includes(initial?.url);
+  if (initialWasBlank && created.length > 0) {
+    await host.closeTarget(initial.targetId).catch(() => {});
+  }
+  return { opened: created.length, closedInitialBlank: initialWasBlank };
 }
 
 export async function runHost(argv = process.argv.slice(2)) {
-  const { command, sdkPath, migrateFrom, profileId, serverName } =
+  const {
+    command,
+    sdkPath,
+    migrateFrom,
+    profileId,
+    serverName,
+    externalTargets,
+  } =
     parseArgs(argv);
   if (command === "help") {
     process.stdout.write(HELP);
@@ -2524,6 +2617,9 @@ export async function runHost(argv = process.argv.slice(2)) {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     return 0;
   }
+  if (externalTargets.length > 0 && command !== "launch") {
+    fail("external URLs and files can only be opened with --launch");
+  }
   const host = await connectToChromium(serverName, profileId);
   if (command === "doctor") {
     const tabs = await host.listTabs();
@@ -2549,9 +2645,13 @@ export async function runHost(argv = process.argv.slice(2)) {
     return 0;
   }
   if (command === "launch") {
+    const external = await openExternalTargets(host, externalTargets);
     process.stdout.write(
       `ego lite Linux is running Chromium from ${host.profileDir}\n`,
     );
+    if (external.opened > 0) {
+      process.stdout.write(`Opened ${external.opened} external target(s).\n`);
+    }
     host.connection.close();
     return 0;
   }

@@ -92,6 +92,10 @@ function startElectron() {
       EGO_LITE_SKIP_MIGRATION: "1",
       EGO_LITE_DISABLE_AUTO_UPDATE: "1",
       EGO_BROWSER_SDK_PATH: sdkPath,
+      ELECTRON_DISABLE_SANDBOX: "1",
+      ELECTRON_OZONE_PLATFORM_HINT: "x11",
+      WAYLAND_DISPLAY: "",
+      XDG_SESSION_TYPE: "x11",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

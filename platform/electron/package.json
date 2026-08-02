@@ -31,6 +31,7 @@
     "test:devtools": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/devtools.mjs",
     "test:download-open": "node test/download-open.mjs",
     "test:extension-loading": "xvfb-run --auto-servernum node test/extension-loading.mjs",
+    "test:external-routing": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/external-routing.mjs",
     "test:find-in-page": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/find-in-page.mjs",
     "test:fullscreen": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/fullscreen.mjs",
     "test:history": "node test/history.mjs",
@@ -53,6 +54,7 @@
     "test:profile-migration": "node test/profile-migration.mjs",
     "test:profile-migration:electron": "xvfb-run --auto-servernum env EGO_LITE_ELECTRON_MIGRATION=1 node test/profile-migration.mjs",
     "test:snapshot-contract": "node test/snapshot-contract.mjs",
+    "test:stale-cdp-probe": "node test/stale-cdp-probe.mjs",
     "test:frame-snapshot": "npm run build:sdk && ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/frame-snapshot.mjs",
     "test:space-restore": "npm run build:sdk && xvfb-run --auto-servernum node test/space-restore.mjs",
     "test:tab-controls": "xvfb-run --auto-servernum node test/tab-controls.mjs",
@@ -87,6 +89,21 @@
       "reading-list.mjs",
       "update.mjs",
       "renderer/**"
+    ],
+    "protocols": [
+      {
+        "name": "Web site URL",
+        "schemes": [
+          "http",
+          "https"
+        ]
+      },
+      {
+        "name": "Local file URL",
+        "schemes": [
+          "file"
+        ]
+      }
     ],
     "extraResources": [
       {
@@ -141,6 +158,10 @@
       "maintainer": "ego lite contributors <contact@citrolabs.ai>",
       "synopsis": "Chromium browser for human and AI-agent workflows",
       "description": "Electron desktop package for the ego lite Linux host",
+      "mimeTypes": [
+        "text/html",
+        "application/xhtml+xml"
+      ],
       "syncDesktopName": true,
       "icon": "../../assets/logo.png"
     },
