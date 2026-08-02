@@ -12,6 +12,15 @@ APP_PATH="/Applications/$APP_BUNDLE_NAME"
 USER_APP_PATH="$HOME/Applications/$APP_BUNDLE_NAME"
 EGO_BROWSER_HELPER_NAME="ego-browser"
 
+# Linux installs are user-local and are assembled from this checkout. The browser
+# host is open source here because the upstream macOS browser bundle is not.
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+REPO_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)
+LINUX_INSTALL_DIR=${EGO_LITE_INSTALL_DIR:-"$HOME/.local/share/ego-lite"}
+LINUX_BIN_DIR=${EGO_LITE_BIN_DIR:-"$HOME/.local/bin"}
+LINUX_DESKTOP_DIR=${XDG_DATA_HOME:-"$HOME/.local/share"}/applications
+LINUX_ICON_DIR=${XDG_DATA_HOME:-"$HOME/.local/share"}/icons/hicolor/512x512/apps
+
 # Temporary directories created when mounting the DMG; cleaned up on exit.
 TEMP_DIR=""
 MOUNT_DIR=""
@@ -212,8 +221,68 @@ install_ego_lite() {
 	die "cannot find $APP_NAME app or pkg in mounted DMG"
 }
 
-main() {
-	[ "$(uname -s)" = "Darwin" ] || die "this script only supports macOS"
+install_linux() {
+	package_dir="$REPO_DIR/package/ego-browser"
+	host_source="$REPO_DIR/platform/linux/ego-browser.mjs"
+	[ -d "$package_dir" ] ||
+		die "Linux installation must run from the ego-lite checkout; package/ego-browser was not found"
+	[ -f "$host_source" ] || die "Linux host source was not found: $host_source"
+	require_command node
+	require_command npm
+	require_command install
+	require_command cp
+
+	if [ ! -x "$package_dir/node_modules/.bin/esbuild" ]; then
+		log "Installing Linux host build dependencies ..."
+		(cd "$package_dir" && npm ci --ignore-scripts) ||
+			die "failed to install ego-browser build dependencies"
+	fi
+	log "Building the ego-browser SDK ..."
+	(cd "$package_dir" && npm run build) || die "failed to build the ego-browser SDK"
+
+	log "Installing ego lite Linux to $LINUX_INSTALL_DIR ..."
+	mkdir -p "$LINUX_INSTALL_DIR/sdk" "$LINUX_INSTALL_DIR/linux" \
+		"$LINUX_INSTALL_DIR/ego-browser" "$LINUX_BIN_DIR" \
+		"$LINUX_DESKTOP_DIR" "$LINUX_ICON_DIR"
+	cp -a "$package_dir/dist/out/." "$LINUX_INSTALL_DIR/sdk/" ||
+		die "failed to install the built ego-browser SDK"
+	cp -a "$REPO_DIR/skills/ego-browser/." "$LINUX_INSTALL_DIR/ego-browser/" ||
+		die "failed to install the ego-browser skill"
+	cp "$host_source" "$LINUX_INSTALL_DIR/linux/ego-browser.mjs" ||
+		die "failed to install the Linux browser host"
+	chmod 0755 "$LINUX_INSTALL_DIR/linux/ego-browser.mjs"
+
+	for command_name in ego-browser ego-lite; do
+		command_path="$LINUX_BIN_DIR/$command_name"
+		if [ -e "$command_path" ] || [ -L "$command_path" ]; then
+			rm -f "$command_path"
+		fi
+		ln -s "$LINUX_INSTALL_DIR/linux/ego-browser.mjs" "$command_path"
+	done
+
+	icon_path="$LINUX_ICON_DIR/ego-lite.png"
+	if [ -f "$REPO_DIR/assets/logo.png" ]; then
+		cp "$REPO_DIR/assets/logo.png" "$icon_path"
+	fi
+	desktop_template="$REPO_DIR/platform/linux/ego-lite.desktop"
+	desktop_path="$LINUX_DESKTOP_DIR/com.citrolabs.ego-lite.desktop"
+	if [ -f "$desktop_template" ]; then
+		sed \
+			-e "s|@EGO_LITE_EXEC@|$LINUX_BIN_DIR/ego-lite|g" \
+			-e "s|@EGO_LITE_ICON@|$icon_path|g" \
+			"$desktop_template" > "$desktop_path"
+	fi
+	if command -v update-desktop-database >/dev/null 2>&1; then
+		update-desktop-database "$LINUX_DESKTOP_DIR" >/dev/null 2>&1 || true
+	fi
+
+	log "Linux installation complete. Ensure $LINUX_BIN_DIR is on PATH."
+	log "Launching ego lite Linux ..."
+	exec "$LINUX_BIN_DIR/ego-lite" --launch
+}
+
+install_macos() {
+	[ "$(uname -s)" = "Darwin" ] || die "this installer branch only supports macOS"
 
 	# Install first if not present; otherwise use the ego-browser bundled inside the app.
 	installed_app_path=$(find_ego_lite_app || true)
@@ -229,6 +298,14 @@ main() {
 
 	log "Launching $APP_NAME ..."
 	exec open "$installed_app_path"
+}
+
+main() {
+	case "$(uname -s)" in
+		Darwin) install_macos ;;
+		Linux) install_linux ;;
+		*) die "unsupported operating system: $(uname -s)" ;;
+	esac
 }
 
 main

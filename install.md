@@ -1,1 +1,1 @@
-skills/ego-browser/references/install.md
+See [`skills/ego-browser/references/install.md`](skills/ego-browser/references/install.md) for installation instructions. Linux-specific host details are documented in [`platform/linux/README.md`](platform/linux/README.md).

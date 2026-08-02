@@ -1,11 +1,13 @@
 # Repository Guidelines
 
 ## Project Overview
+
 `ego-browser` is a Node.js CDP browser-automation harness for AI agents. It drives the ego lite browser through `globalThis.ego` bindings (provided by the closed-source ego lite app), exposes a compact snapshot/ref workflow, and layers reusable site-specific knowledge ("learnings") on top of the browser runtime.
 
-This repo contains the open-source harness and the agent skill package — **not** the browser itself. The ego lite app bundles its own `ego-browser` binary that embeds this runtime; `skills/ego-browser/SKILL.md` documents that binary's usage (`ego-browser nodejs <<'EOF' ... EOF`). The repo CLI built here takes the heredoc directly on stdin with no subcommand.
+This repo contains the open-source harness and agent skill package, plus a Linux host that runs the SDK against stock Chromium. The upstream macOS ego lite browser remains a separate closed-source app; `skills/ego-browser/SKILL.md` documents the shared binary contract (`ego-browser nodejs <<'EOF' ... EOF`). The repo CLI built here takes the heredoc directly on stdin with no subcommand, while `platform/linux/ego-browser.mjs` provides the Linux bridge.
 
 ## Architecture & Data Flow
+
 - `package/ego-browser/src/index.ts` is the entrypoint with two startup paths:
   - Executed directly as a CLI → `runMain()` (reads JavaScript from stdin, executes it).
   - Imported as a module (how the app embeds it) → `installEgoSdk(globalThis)`.
@@ -23,12 +25,15 @@ This repo contains the open-source harness and the agent skill package — **not
 Data flow: `stdin JS` → `runMain()` → `helperContext()` helpers → browser runtime/CDP → snapshot or DOM/AX resolution → optional site tools → `console.log(...)`.
 
 ## Task Spaces
+
 Task spaces are isolated browsing contexts with an ownership model (`agent` / `user`):
+
 - `useOrCreateTaskSpace(nameOrId)` reuses an agent-owned space or creates a new one; it no longer auto-claims user-owned spaces. Use `claimTaskSpace(nameOrId)` to take ownership of a user-owned space. Ids are numeric; prefer `task.id` over names across rounds.
 - `switchTaskSpace` requires agent ownership; `newTaskSpace` creates; `completeTaskSpace(nameOrId, { keep })` finishes (`keep` is mandatory).
 - Control handoff: `handOffTaskSpace` / `takeOverTaskSpace` / `waitForAgentControl`.
 
 ## Key Directories
+
 - `package/ego-browser/src/` — runtime, helpers, resolver, drivers, learning subsystem.
 - `package/ego-browser/src/**/*.test.mjs` — tests are colocated with the code (there is no separate `test/` directory).
 - `package/ego-browser/scripts/` — `build.mjs` (esbuild per-file → `dist/src`, rollup bundle → `dist/out/index.js`, copies `skills/ego-browser` → `dist/out/ego-browser`), `validate-site-skills.ts`, `run-e2e.sh`.
@@ -36,13 +41,16 @@ Task spaces are isolated browsing contexts with an ownership model (`agent` / `u
 - `skills/ego-browser/learnings/` — reusable per-site experience packs (`manifest.json` + `notes/` + `tools/` + `browser-tools/`).
 
 ## Development Commands
+
 Run from `package/ego-browser/`:
+
 - `npm test` — build, typecheck, then `node --test` over `src/**/*.test.mjs`.
 - `npm run e2e` — task-space e2e suite (`src/taskspace-e2e.test.mjs`).
 - `npm run validate:site-skills` (alias `validate:learnings`) — validate learned site skills.
 - `node dist/out/index.js <<'JS' ... JS` — run the built CLI from this checkout (requires an `ego` runtime for real browser work; `--doctor`, `--reload`, `-h` also supported).
 
 ## Code Conventions & Common Patterns
+
 - ESM only (`"type": "module"`); Node 22+.
 - Public helpers are camelCase, verb-first for async actions (`ensureSession`, `runSiteTool`).
 - Time parameters are in seconds unless the name ends in `Ms`.
@@ -54,6 +62,7 @@ Run from `package/ego-browser/`:
 - Site skills must stay site-shaped and verifiable: stable URLs, durable selectors, no pixel coordinates, no secrets.
 
 ## Testing & QA
+
 - Framework: Node's built-in runner (`node --test`), assertions via `node:assert/strict`.
 - Tests run against the build output (`dist/src/...`) — `npm test` builds first.
 - Behavior-focused tests inject overrides (`__testing.setOverrides`) or a `FakeEgo` double (see `src/helpers.test.mjs`, `src/taskspace-e2e.test.mjs`).

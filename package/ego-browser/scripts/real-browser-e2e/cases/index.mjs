@@ -49,10 +49,14 @@ export const e2eCases = [
   },
   { name: "keyboard and file helpers", body: keyboardCase },
   { name: "keyboard regression", body: keyboardRegressionCase },
-  {
-    name: "macOS bare Meta input isolation",
-    body: macosInputRegressionCase,
-  },
+  ...(process.platform === "darwin"
+    ? [
+        {
+          name: "macOS bare Meta input isolation",
+          body: macosInputRegressionCase,
+        },
+      ]
+    : []),
   { name: "wait helpers", body: waitHelpersCase },
   { name: "fetch helpers", body: fetchHelpersCase },
   { name: "cdp js help", body: cdpJsHelpCase },
