@@ -36,7 +36,7 @@ The RPM target requires `rpmbuild`: install `rpm-tools` on Arch-based systems or
 
 The package includes the Linux host, built SDK, and `ego-browser` skill under its resources. Sign in through the primary visible tab; each new task Space starts with a cookie snapshot from that session, then keeps its own persistent cookie jar. The packaged executable also accepts `--cli`, so a smoke check can use `ego-lite --cli --doctor` or run the SDK through `ego-lite --cli nodejs`. Linux artifacts are written to `platform/electron/dist/`.
 
-On the first packaged-app launch, when exactly one supported Chromium-family profile is found and the ego lite profile is still empty, a one-time migration prompt offers to copy portable browser data before the browser window opens. Set `EGO_LITE_SKIP_MIGRATION=1` for unattended launches; choosing to keep profiles separate records the decision in the target profile. Passwords from Chromium’s basic plaintext store are copied; keyring-backed passwords remain excluded.
+On the first packaged-app launch, when a supported Chromium-family profile is found and the ego lite profile is still empty, a one-time migration prompt offers to copy portable browser data before the browser window opens. If multiple profiles are found, the prompt first asks you to choose one profile directory. Set `EGO_LITE_SKIP_MIGRATION=1` for unattended launches; choosing to keep profiles separate records the decision in the target profile. Passwords from Chromium’s basic plaintext store are copied; keyring-backed passwords remain excluded.
 
 The toolbar’s Import button provides the repeatable Settings → Import data path. It opens a directory chooser for a Chromium-family user-data directory or profile, saves the request, restarts the app, performs the guarded migration before the new window opens, restores imported HTTP(S) tabs and groups, and backs up replaced target data. Close the source browser first; basic-store passwords are copied while keyring-backed passwords remain excluded.
 
@@ -90,10 +90,16 @@ The detached Import data probe clicks the toolbar control through renderer CDP, 
 npm run test:import-data
 ```
 
-The migration-discovery probe verifies that onboarding selects only one usable supported profile and refuses to guess when multiple profiles are available:
+The migration-discovery probe verifies that all usable supported profiles are enumerated while the standalone single-profile helper refuses to guess when multiple profiles are available:
 
 ```bash
 npm run test:migration-discovery
+```
+
+The detached multi-profile onboarding probe verifies that first-run migration can select `Profile 1` explicitly without guessing or opening a foreground window:
+
+```bash
+npm run test:migration-prompt:multi
 ```
 
 The detached onboarding probe verifies that the one-time decision marker is written before the browser bridge starts:

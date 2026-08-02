@@ -20,7 +20,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import {
-  findSingleMigrationProfile,
+  findMigrationProfiles,
   profileLooksUsable,
 } from "./migration-discovery.mjs";
 
@@ -1010,8 +1010,40 @@ async function maybeOfferPackagedMigration() {
   if (await profileLooksUsable(join(PROFILE_DIR, "Default"))) {
     return { stopped: false };
   }
-  const source = await findSingleMigrationProfile();
-  if (!source) return { stopped: false };
+  const candidates = await findMigrationProfiles();
+  if (candidates.length === 0) return { stopped: false };
+
+  let source = candidates[0];
+  const forcedSource = process.env.EGO_LITE_MIGRATION_SOURCE?.trim();
+  if (forcedSource) {
+    source = {
+      name: "Selected browser",
+      profileDir: resolve(forcedSource),
+    };
+  } else if (candidates.length > 1) {
+    const candidateList = candidates
+      .map(
+        (candidate) =>
+          `${candidate.name} / ${candidate.profileName}: ${candidate.profileDir}`,
+      )
+      .join("\n");
+    const selection = await dialog.showOpenDialog({
+      title: "Choose a browser profile to migrate",
+      buttonLabel: "Choose profile",
+      defaultPath: candidates[0].profileDir,
+      properties: ["openDirectory"],
+      message:
+        "More than one Chromium-family profile is available. Choose one profile directory to import.",
+      detail: candidateList,
+    });
+    if (selection.canceled || selection.filePaths.length === 0) {
+      return { stopped: false };
+    }
+    source = {
+      name: "Selected browser",
+      profileDir: resolve(selection.filePaths[0]),
+    };
+  }
 
   await writeFile(
     MIGRATION_PROMPT_MARKER,

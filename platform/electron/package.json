@@ -23,6 +23,7 @@
     "test:import-data": "xvfb-run --auto-servernum node test/import-data.mjs",
     "test:migration-discovery": "node test/migration-discovery.mjs",
     "test:migration-prompt": "xvfb-run --auto-servernum node test/migration-prompt.mjs",
+    "test:migration-prompt:multi": "xvfb-run --auto-servernum env EGO_LITE_TEST_MULTI_PROFILE=1 EGO_LITE_TEST_MIGRATION_CHOICE=migrate node test/migration-prompt.mjs",
     "test:migrated-tabs": "xvfb-run --auto-servernum node test/migrated-tabs.mjs",
     "test:password-migration": "node test/password-migration.mjs",
     "test:session-restore": "xvfb-run --auto-servernum node test/session-restore.mjs",

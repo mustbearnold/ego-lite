@@ -4,6 +4,7 @@ import test from "node:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  findMigrationProfiles,
   findSingleMigrationProfile,
   profileLooksUsable,
 } from "../migration-discovery.mjs";
@@ -24,6 +25,7 @@ test("finds the only usable Chrome-family profile", async () => {
         name: "Google Chrome",
         userDataDir: join(root, "google-chrome"),
         profileDir,
+        profileName: "Default",
       },
     );
   } finally {
@@ -43,6 +45,16 @@ test("does not guess when more than one supported profile is usable", async () =
     assert.equal(
       await findSingleMigrationProfile([{ name: "Chromium", userDataDir }]),
       null,
+    );
+    const profiles = await findMigrationProfiles([
+      { name: "Chromium", userDataDir },
+    ]);
+    assert.deepEqual(
+      profiles.map(({ name, profileName }) => ({ name, profileName })),
+      [
+        { name: "Chromium", profileName: "Default" },
+        { name: "Chromium", profileName: "Profile 1" },
+      ],
     );
   } finally {
     await rm(root, { recursive: true, force: true });

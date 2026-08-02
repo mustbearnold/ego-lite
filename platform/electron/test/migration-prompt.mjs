@@ -9,8 +9,11 @@ const electronPath = resolve(testDir, "../node_modules/.bin/electron");
 const root = await mkdtemp(join(tmpdir(), "ego-electron-migration-prompt-"));
 const profileDir = join(root, "ego-profile");
 const sourceProfile = join(root, "config", "google-chrome", "Default");
+const selectedProfile = join(root, "config", "google-chrome", "Profile 1");
 const markerPath = join(profileDir, ".migration-prompted");
 const bridgeFile = join(profileDir, "ego-lite-bridge.json");
+const multiProfile = process.env.EGO_LITE_TEST_MULTI_PROFILE === "1";
+const expectedSource = multiProfile ? selectedProfile : sourceProfile;
 const environment = {
   ...process.env,
   EGO_LITE_PROFILE_DIR: profileDir,
@@ -19,6 +22,7 @@ const environment = {
   EGO_LITE_MIGRATION_PROMPT: "1",
   EGO_LITE_MIGRATION_CHOICE:
     process.env.EGO_LITE_TEST_MIGRATION_CHOICE || "skip",
+  EGO_LITE_MIGRATION_SOURCE: multiProfile ? selectedProfile : "",
   XDG_CONFIG_HOME: join(root, "config"),
 };
 
@@ -60,6 +64,13 @@ async function waitFor(label, callback, timeoutMs = 15000) {
 try {
   await mkdir(sourceProfile, { recursive: true });
   await writeFile(join(sourceProfile, "Preferences"), '{"profile":{}}\n');
+  if (multiProfile) {
+    await mkdir(selectedProfile, { recursive: true });
+    await writeFile(
+      join(selectedProfile, "Preferences"),
+      '{"profile":{"name":"selected profile"}}\n',
+    );
+  }
   await waitFor("Electron bridge after migration decision", async () => {
     try {
       return JSON.parse(await readFile(bridgeFile, "utf8"));
@@ -68,7 +79,7 @@ try {
     }
   });
   const marker = await readFile(markerPath, "utf8");
-  if (!marker.includes(`source=${sourceProfile}`)) {
+  if (!marker.includes(`source=${expectedSource}`)) {
     throw new Error(`migration marker did not record source: ${marker}`);
   }
   const decision = environment.EGO_LITE_MIGRATION_CHOICE;
@@ -82,8 +93,13 @@ try {
         `migration did not copy source Preferences: ${migratedPreferences}`,
       );
     }
+    if (multiProfile && !migratedPreferences.includes("selected profile")) {
+      throw new Error(
+        `migration did not use the selected profile: ${migratedPreferences}`,
+      );
+    }
   }
-  console.log(JSON.stringify({ decision, markerSource: sourceProfile }));
+  console.log(JSON.stringify({ decision, markerSource: expectedSource, multiProfile }));
 } catch (error) {
   throw new Error(`${error.message}\nstdout:\n${stdout}\nstderr:\n${stderr}`);
 } finally {

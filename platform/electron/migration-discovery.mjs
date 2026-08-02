@@ -1,6 +1,6 @@
 import { access, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 const PROFILE_NAMES = ["Default"];
 const PROFILE_DIRECTORY_PATTERN = /^Profile \d+$/;
@@ -61,7 +61,7 @@ export function defaultMigrationSources(
   ];
 }
 
-export async function findSingleMigrationProfile(
+export async function findMigrationProfiles(
   sources = defaultMigrationSources(),
 ) {
   const candidates = [];
@@ -72,9 +72,17 @@ export async function findSingleMigrationProfile(
           name: source.name,
           userDataDir: source.userDataDir,
           profileDir,
+          profileName: basename(profileDir),
         });
       }
     }
   }
+  return candidates;
+}
+
+export async function findSingleMigrationProfile(
+  sources = defaultMigrationSources(),
+) {
+  const candidates = await findMigrationProfiles(sources);
   return candidates.length === 1 ? candidates[0] : null;
 }
