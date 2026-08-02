@@ -130,6 +130,20 @@ const CONTEXT_SCOPED_BROWSER_METHODS = new Set([
   "Browser.resetPermissions",
   "Browser.setPermission",
 ]);
+const ELECTRON_BLOCKED_TARGET_METHODS = new Map([
+  [
+    "Target.createTarget",
+    "Target.createTarget is unavailable through the Electron bridge; use newTab() so the tab remains in the selected Space",
+  ],
+  [
+    "Target.createBrowserContext",
+    "Target.createBrowserContext is unavailable through the Electron bridge; use task-space helpers",
+  ],
+  [
+    "Target.disposeBrowserContext",
+    "Target.disposeBrowserContext is unavailable through the Electron bridge; use closeTaskSpace()",
+  ],
+]);
 
 const HELP = `ego-browser (Linux host)
 
@@ -899,6 +913,18 @@ class LinuxEgoHost {
         this.onSendCDPMessageError?.(
           "task space is under user control",
           "EGO_TASK_SPACE_USER_IN_CONTROL",
+        ),
+      );
+      return;
+    }
+    if (
+      this.electronBridge &&
+      ELECTRON_BLOCKED_TARGET_METHODS.has(message.method)
+    ) {
+      queueMicrotask(() =>
+        this.onSendCDPMessageError?.(
+          ELECTRON_BLOCKED_TARGET_METHODS.get(message.method),
+          "EGO_CDP_SEND_FAILED",
         ),
       );
       return;

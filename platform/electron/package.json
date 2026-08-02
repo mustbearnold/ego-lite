@@ -23,6 +23,7 @@
     "test:bookmarks": "node test/bookmarks.mjs",
     "test:background-space": "xvfb-run --auto-servernum node test/background-space.mjs",
     "test:cookie-parity": "npm run build:sdk && xvfb-run --auto-servernum node test/cookie-inheritance.mjs",
+    "test:cdp-boundary": "npm run build:sdk && ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/cdp-boundary.mjs",
     "test:devtools": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/devtools.mjs",
     "test:download-open": "node test/download-open.mjs",
     "test:extension-loading": "xvfb-run --auto-servernum node test/extension-loading.mjs",

@@ -118,6 +118,12 @@ The background-Space probe verifies that creating a task tab leaves the primary 
 npm run test:background-space
 ```
 
+The Electron bridge rejects raw target and browser-context creation so an Agent cannot bypass Space ownership; the detached CLI probe checks that `Target.createTarget`, `Target.createBrowserContext`, and `Target.disposeBrowserContext` all fail with the stable CDP-send error:
+
+```bash
+npm run test:cdp-boundary
+```
+
 The profile-migration probe verifies explicit Chrome-data migration, backup creation, and cookie transfer:
 
 ```bash
