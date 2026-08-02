@@ -48,6 +48,8 @@ command -v ego-browser
 ego-browser --doctor
 ```
 
+On an interactive first install, the script offers a one-time migration when it finds exactly one Chromium-family profile. Accepting runs the safe profile migration before launching ego lite; decline it to keep the separate profile. Set `EGO_LITE_SKIP_MIGRATION=1` for unattended installs. You can always run `ego-lite --migrate-profile --from /path/to/browser-user-data` later.
+
 The browser profile is stored under `~/.local/share/ego-lite/chromium-profile`; task-space metadata is stored under `~/.local/state/ego-lite/task-spaces.json`. Set `EGO_LITE_HEADLESS=1` for CI or machines without a display. Set `EGO_BROWSER_EXECUTABLE` when Chromium is installed at a non-standard path.
 
 The Linux host uses Chromium's standard accessibility tree for semantic snapshots. It preserves the existing SDK, task-space ownership, browser permission CDP, screenshots, downloads, uploads, and locator behavior, but it cannot reproduce the closed-source macOS app's custom snapshot engine. To migrate portable Chrome-family data, close the source browser and run `ego-lite --migrate-profile --from "$HOME/.config/google-chrome"`; the command backs up replaced data, copies portable settings/bookmarks/storage, and transfers readable cookies, but intentionally does not import encrypted passwords.

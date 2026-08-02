@@ -221,6 +221,58 @@ install_ego_lite() {
 	die "cannot find $APP_NAME app or pkg in mounted DMG"
 }
 
+linux_profile_is_usable() {
+	profile_dir="$1"
+	[ -d "$profile_dir" ] || return 1
+	[ -f "$profile_dir/Bookmarks" ] ||
+		[ -f "$profile_dir/Preferences" ] ||
+		[ -f "$profile_dir/History" ]
+}
+
+find_linux_migration_source() {
+	config_dir=${XDG_CONFIG_HOME:-"$HOME/.config"}
+	first_source=""
+	source_count=0
+	for candidate in \
+		"$config_dir/chromium/Default" \
+		"$config_dir/google-chrome/Default" \
+		"$config_dir/google-chrome-beta/Default" \
+		"$config_dir/BraveSoftware/Brave-Browser/Default"; do
+		if linux_profile_is_usable "$candidate"; then
+			first_source="$candidate"
+			source_count=$((source_count + 1))
+		fi
+	done
+	[ "$source_count" -eq 1 ] || return 1
+	printf '%s\n' "$first_source"
+}
+
+offer_linux_profile_migration() {
+	[ "${EGO_LITE_SKIP_MIGRATION:-0}" != "1" ] || return 0
+	[ -t 0 ] || return 0
+	migration_marker="$LINUX_INSTALL_DIR/.migration-prompted"
+	[ ! -e "$migration_marker" ] || return 0
+	migration_source=$(find_linux_migration_source || true)
+	[ -n "$migration_source" ] || return 0
+
+	log "Found one Chromium-family profile at $migration_source."
+	log "ego lite can copy portable settings, bookmarks, storage, and readable cookies."
+	log "Saved passwords are not copied; close the source browser before migration."
+	printf 'Migrate this profile into ego lite now? [y/N] '
+	IFS= read -r migration_answer || migration_answer=""
+	touch "$migration_marker"
+	case "$migration_answer" in
+		y|Y|yes|YES|Yes)
+			if ! "$LINUX_BIN_DIR/ego-lite" --migrate-profile --from "$migration_source"; then
+				log "warning: profile migration did not complete; run ego-lite --migrate-profile --from '$migration_source' after closing the source browser"
+			fi
+			;;
+		*)
+			log "Skipping browser migration. Run ego-lite --migrate-profile --from '$migration_source' later if needed."
+			;;
+	esac
+}
+
 install_linux() {
 	package_dir="$REPO_DIR/package/ego-browser"
 	host_source="$REPO_DIR/platform/linux/ego-browser.mjs"
@@ -275,6 +327,7 @@ install_linux() {
 	if command -v update-desktop-database >/dev/null 2>&1; then
 		update-desktop-database "$LINUX_DESKTOP_DIR" >/dev/null 2>&1 || true
 	fi
+	offer_linux_profile_migration
 
 	log "Linux installation complete. Ensure $LINUX_BIN_DIR is on PATH."
 	log "Launching ego lite Linux ..."

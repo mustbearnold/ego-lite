@@ -34,6 +34,8 @@ npm install
 npm run package:linux
 ```
 
+The checkout installer offers the same migration during an interactive first install when it finds exactly one supported Chromium-family profile. Use `EGO_LITE_SKIP_MIGRATION=1` for unattended installs.
+
 ## Runtime configuration
 
 `EGO_BROWSER_EXECUTABLE` selects Chromium/Chrome explicitly. `EGO_LITE_PROFILE_DIR` changes the persistent browser profile, and `EGO_LITE_STATE_PATH` changes task-space metadata. `EGO_LITE_HEADLESS=1` enables headless Chromium; `EGO_LITE_CHROMIUM_ARGS_JSON` accepts an extra JSON array of Chromium arguments.
