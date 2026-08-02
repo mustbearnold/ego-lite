@@ -779,6 +779,36 @@ test("browserSnapshotRefsToRefMap populates ref map from snapshot refs", () => {
   assert.equal(refMap._data.get("100").name, "Home");
 });
 
+test("browserSnapshotRefsToRefMap preserves frame ownership for nested refs", () => {
+  const refMap = {
+    _data: new Map(),
+    clear() {
+      this._data.clear();
+    },
+    addWithFrame(id, backendNodeId, role, name, nth, frameId) {
+      this._data.set(id, { backendNodeId, role, name, nth, frameId });
+    },
+    add(id, backendNodeId, role, name) {
+      this._data.set(id, { backendNodeId, role, name });
+    },
+  };
+  browserSnapshotRefsToRefMap(refMap, [
+    {
+      backendNodeId: 77,
+      role: "button",
+      name: "Nested action",
+      frameId: "child-frame",
+    },
+  ]);
+  assert.deepEqual(refMap._data.get("77"), {
+    backendNodeId: 77,
+    role: "button",
+    name: "Nested action",
+    nth: undefined,
+    frameId: "child-frame",
+  });
+});
+
 test("browserSnapshotRefsToRefMap clears the map before populating", () => {
   const refMap = {
     _data: new Map([["old", { backendNodeId: 1 }]]),

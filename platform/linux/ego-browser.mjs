@@ -839,40 +839,20 @@ class LinuxEgoHost {
     await this.connection
       .request("Accessibility.enable", {}, sessionId)
       .catch(() => {});
-    let result = await this.connection.request(
-      "Accessibility.getFullAXTree",
-      {},
+    const snapshotNodes = await snapshotAccessibilityTree(
+      this.connection,
       sessionId,
     );
-    for (
-      let attempt = 0;
-      attempt < 20 && (result.nodes?.length || 0) <= 3;
-      attempt += 1
-    ) {
-      await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
-      const retry = await this.connection.request(
-        "Accessibility.getFullAXTree",
-        {},
-        sessionId,
-      );
-      if ((retry.nodes?.length || 0) > (result.nodes?.length || 0)) {
-        result = retry;
-      }
-    }
     if (process.env.EGO_LITE_DEBUG === "1") {
       process.stderr.write(
-        `[ego-lite-linux] snapshot target=${targetId} session=${sessionId} nodes=${result.nodes?.length || 0}\n`,
+        `[ego-lite-linux] snapshot target=${targetId} session=${sessionId} nodes=${snapshotNodes.length}\n`,
       );
     }
-    const snapshotNodes =
+    const scopedNodes =
       options.scope === "only_within_viewport"
-        ? await nodesWithinViewport(
-            this.connection,
-            sessionId,
-            result.nodes || [],
-          )
-        : result.nodes || [];
-    const { content, refs } = renderAccessibilityTree(snapshotNodes, options);
+        ? await nodesWithinViewport(this.connection, sessionId, snapshotNodes)
+        : snapshotNodes;
+    const { content, refs } = renderAccessibilityTree(scopedNodes, options);
     return { content, refs };
   }
 
@@ -1207,6 +1187,132 @@ function isBrowserContextUnavailable(error) {
   );
 }
 
+const MAX_SNAPSHOT_FRAMES = 128;
+
+async function readAccessibilityTree(connection, sessionId, frameId) {
+  const params = frameId ? { frameId } : {};
+  let result = await connection.request(
+    "Accessibility.getFullAXTree",
+    params,
+    sessionId,
+  );
+  for (
+    let attempt = 0;
+    attempt < 20 && (result.nodes?.length || 0) <= 3;
+    attempt += 1
+  ) {
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+    const retry = await connection.request(
+      "Accessibility.getFullAXTree",
+      params,
+      sessionId,
+    );
+    if ((retry.nodes?.length || 0) > (result.nodes?.length || 0)) {
+      result = retry;
+    }
+  }
+  return result.nodes || [];
+}
+
+function flattenFrameTree(tree, parentId = null, frames = []) {
+  if (!tree?.frame?.id || frames.length >= MAX_SNAPSHOT_FRAMES) return frames;
+  const frame = tree.frame;
+  frames.push({ frame, parentId: frame.parentId || parentId });
+  for (const child of tree.childFrames || []) {
+    flattenFrameTree(child, frame.id, frames);
+    if (frames.length >= MAX_SNAPSHOT_FRAMES) break;
+  }
+  return frames;
+}
+
+function frameRootNode(nodes) {
+  const childIds = new Set(nodes.flatMap((candidate) => candidate.childIds || []));
+  return (
+    nodes.find((node) => axValue(node.role) === "RootWebArea") ||
+    nodes.find((node) => !childIds.has(node.nodeId)) ||
+    null
+  );
+}
+
+function namespacedFrameNodes(frameId, nodes, includeFrameId) {
+  const prefix = `${frameId}:`;
+  return nodes.map((node) => ({
+    ...node,
+    nodeId: `${prefix}${node.nodeId}`,
+    childIds: (node.childIds || []).map((childId) => `${prefix}${childId}`),
+    frameId: includeFrameId ? frameId : undefined,
+  }));
+}
+
+async function snapshotAccessibilityTree(connection, sessionId) {
+  let frameTree;
+  try {
+    frameTree = (await connection.request("Page.getFrameTree", {}, sessionId))
+      .frameTree;
+  } catch {
+    return readAccessibilityTree(connection, sessionId);
+  }
+  const frames = flattenFrameTree(frameTree);
+  if (frames.length === 0) return readAccessibilityTree(connection, sessionId);
+
+  await connection.request("DOM.enable", {}, sessionId).catch(() => {});
+  const snapshots = [];
+  for (const entry of frames) {
+    try {
+      const rawNodes = await readAccessibilityTree(
+        connection,
+        sessionId,
+        entry.frame.id,
+      );
+      const nodes = namespacedFrameNodes(
+        entry.frame.id,
+        rawNodes,
+        entry.frame.id !== frames[0].frame.id,
+      );
+      snapshots.push({
+        ...entry,
+        nodes,
+        root: frameRootNode(nodes),
+      });
+    } catch (error) {
+      if (entry.frame.id === frames[0].frame.id) throw error;
+    }
+  }
+  if (snapshots.length === 0) return [];
+
+  const attachedRoots = new Set();
+  for (const child of snapshots) {
+    if (!child.parentId || !child.root) continue;
+    const parent = snapshots.find(
+      (candidate) => candidate.frame.id === child.parentId,
+    );
+    if (!parent) continue;
+    let owner;
+    try {
+      owner = await connection.request(
+        "DOM.getFrameOwner",
+        { frameId: child.frame.id },
+        sessionId,
+      );
+    } catch {
+      continue;
+    }
+    const ownerNode = parent.nodes.find(
+      (node) => node.backendDOMNodeId === owner.backendNodeId,
+    );
+    if (!ownerNode) continue;
+    const childIds = child.root.childIds || [];
+    ownerNode.childIds = [
+      ...new Set([...(ownerNode.childIds || []), ...childIds]),
+    ];
+    attachedRoots.add(child.root.nodeId);
+  }
+
+  return snapshots.flatMap((snapshot) =>
+    snapshot.nodes.filter((node) => !attachedRoots.has(node.nodeId)),
+  );
+}
+
 const ACTIONABLE_AX_ROLES = new Set([
   "button",
   "checkbox",
@@ -1404,16 +1510,23 @@ function renderAccessibilityTree(nodes, options) {
         backendNodeId !== null
       ) {
         annotations.push(`ref=${backendNodeId}`);
-        if (!seenRefs.has(backendNodeId)) {
-          seenRefs.add(backendNodeId);
-          refs.push({
+        const refKey = `${node.frameId || "root"}:${backendNodeId}`;
+        if (!seenRefs.has(refKey)) {
+          seenRefs.add(refKey);
+          const ref = {
             backendNodeId,
             role: role || "generic",
             name,
-          });
+          };
+          if (node.frameId) ref.frameId = node.frameId;
+          refs.push(ref);
         }
       }
-      if (options.includeStableLocator !== false && actionable) {
+      if (
+        options.includeStableLocator !== false &&
+        actionable &&
+        !node.frameId
+      ) {
         const stableLocator = stableLocatorForNode(role, name);
         if (stableLocator) annotations.push(stableLocator);
       }
@@ -2423,6 +2536,7 @@ export {
   inspectPasswordMigration,
   nodesWithinViewport,
   renderAccessibilityTree,
+  snapshotAccessibilityTree,
 };
 
 if (isDirectExecution()) {

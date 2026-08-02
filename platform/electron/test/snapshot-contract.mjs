@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   nodesWithinViewport,
   renderAccessibilityTree,
+  snapshotAccessibilityTree,
 } from "../../linux/ego-browser.mjs";
 
 const fixtureNodes = [
@@ -97,4 +98,83 @@ test("viewport scope keeps visible nodes and their accessibility ancestors", asy
     scoped.map((node) => node.nodeId),
     ["root", "heading", "button"],
   );
+});
+
+test("snapshot accessibility tree includes nested frame content and frame refs", async () => {
+  const trees = new Map([
+    [
+      "root-frame",
+      [
+        {
+          nodeId: "root",
+          role: { value: "RootWebArea" },
+          childIds: ["owner"],
+          backendDOMNodeId: 1,
+        },
+        {
+          nodeId: "owner",
+          role: { value: "Iframe" },
+          name: { value: "Child frame" },
+          childIds: [],
+          backendDOMNodeId: 2,
+        },
+        { nodeId: "ignored-a", ignored: true, childIds: [] },
+        { nodeId: "ignored-b", ignored: true, childIds: [] },
+      ],
+    ],
+    [
+      "child-frame",
+      [
+        {
+          nodeId: "child-root",
+          role: { value: "RootWebArea" },
+          childIds: ["child-button"],
+          backendDOMNodeId: 10,
+        },
+        {
+          nodeId: "child-button",
+          role: { value: "button" },
+          name: { value: "Child action" },
+          childIds: [],
+          backendDOMNodeId: 11,
+        },
+        { nodeId: "ignored-a", ignored: true, childIds: [] },
+        { nodeId: "ignored-b", ignored: true, childIds: [] },
+      ],
+    ],
+  ]);
+  const connection = {
+    async request(method, params) {
+      if (method === "Page.getFrameTree") {
+        return {
+          frameTree: {
+            frame: { id: "root-frame" },
+            childFrames: [{ frame: { id: "child-frame", parentId: "root-frame" } }],
+          },
+        };
+      }
+      if (method === "Accessibility.getFullAXTree") {
+        return { nodes: trees.get(params.frameId) };
+      }
+      if (method === "DOM.getFrameOwner") return { backendNodeId: 2 };
+      return {};
+    },
+  };
+
+  const nodes = await snapshotAccessibilityTree(connection, "session");
+  const rendered = renderAccessibilityTree(nodes, {
+    includeActionMarks: true,
+    includeStableLocator: true,
+  });
+  assert.match(rendered.content, /Iframe "Child frame"/);
+  assert.match(rendered.content, /button "Child action" \[ref=11\]/);
+  assert.doesNotMatch(rendered.content, /Child action.*loc=role/);
+  assert.deepEqual(rendered.refs, [
+    {
+      backendNodeId: 11,
+      role: "button",
+      name: "Child action",
+      frameId: "child-frame",
+    },
+  ]);
 });

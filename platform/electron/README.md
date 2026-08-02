@@ -254,6 +254,12 @@ The snapshot-contract probe covers action marks, stable role locators, result li
 npm run test:snapshot-contract
 ```
 
+The detached frame-snapshot probe loads a cross-origin nested page, verifies that the snapshot includes iframe content, and clicks a child-frame ref through the SDK without opening the app on the user's desktop:
+
+```bash
+npm run test:frame-snapshot
+```
+
 The packaged CLI exposes the same migration and diagnostic commands as the standalone host, for example `ego-lite --cli --profile work --doctor` or `ego-lite --cli --migrate-profile --from "$HOME/.config/google-chrome"`. Close the source browser first; only Chromium’s basic plaintext password store is imported.
 
 Do not run the Electron package and the standalone Linux host against the same profile at the same time. Set `EGO_LITE_PROFILE_DIR` to use a separate profile.

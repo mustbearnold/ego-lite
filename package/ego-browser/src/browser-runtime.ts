@@ -315,12 +315,23 @@ export function browserSnapshotRefsToRefMap(refMap, refs = []) {
     if (ref.backendNodeId === undefined || ref.backendNodeId === null) {
       continue;
     }
-    refMap.add(
-      String(ref.backendNodeId),
-      ref.backendNodeId,
-      ref.role,
-      ref.name,
-      undefined,
-    );
+    if (typeof refMap.addWithFrame === "function") {
+      refMap.addWithFrame(
+        String(ref.backendNodeId),
+        ref.backendNodeId,
+        ref.role,
+        ref.name,
+        undefined,
+        ref.frameId,
+      );
+    } else {
+      refMap.add(
+        String(ref.backendNodeId),
+        ref.backendNodeId,
+        ref.role,
+        ref.name,
+        undefined,
+      );
+    }
   }
 }
