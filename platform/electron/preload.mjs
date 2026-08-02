@@ -13,6 +13,9 @@ contextBridge.exposeInMainWorld("egoLite", {
   showDownload: (id) => ipcRenderer.invoke("ego-lite:show-download", id),
   openDownload: (id) => ipcRenderer.invoke("ego-lite:open-download", id),
   clearHistory: () => ipcRenderer.invoke("ego-lite:clear-history"),
+  addReadingList: () => ipcRenderer.invoke("ego-lite:add-reading-list"),
+  removeReadingList: (url) =>
+    ipcRenderer.invoke("ego-lite:remove-reading-list", url),
   setExtension: (value) => ipcRenderer.invoke("ego-lite:set-extension", value),
   importData: () => ipcRenderer.invoke("ego-lite:import-data"),
   setTabGroup: (value) => ipcRenderer.invoke("ego-lite:set-tab-group", value),

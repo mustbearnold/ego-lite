@@ -32,6 +32,12 @@ import {
   readHistoryDocument,
   recordHistory,
 } from "./history.mjs";
+import {
+  addReadingListEntry,
+  readReadingListDocument,
+  readingListDocument,
+  removeReadingListEntry,
+} from "./reading-list.mjs";
 import { createUpdateController } from "./update.mjs";
 
 const MAIN_DIR = dirname(fileURLToPath(import.meta.url));
@@ -164,10 +170,12 @@ const PENDING_IMPORT_PATH = join(PROFILE_DIR, PENDING_IMPORT_FILE);
 const SPACE_SESSION_FILE = "ego-lite-space-session.json";
 const SPACE_SESSION_PATH = join(PROFILE_DIR, SPACE_SESSION_FILE);
 const HISTORY_PATH = join(PROFILE_DIR, "ego-lite-history.json");
+const READING_LIST_PATH = join(PROFILE_DIR, "ego-lite-reading-list.json");
 let sessionSaveTimer;
 let spaceSaveTimer;
 let importRequestPending = false;
 let historyEntries = [];
+let readingListEntries = [];
 
 const permissionAliases = {
   clipboardReadWrite: ["clipboard-read", "clipboard-sanitized-write"],
@@ -232,6 +240,74 @@ function recordViewHistory(view) {
   historyEntries = next;
   writeHistory();
   publishBrowserState();
+}
+
+function readReadingList() {
+  try {
+    return readReadingListDocument(
+      JSON.parse(readFileSync(READING_LIST_PATH, "utf8")),
+    );
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      console.warn(
+        `[ego-lite] could not read reading list: ${error?.message || String(error)}`,
+      );
+    }
+    return [];
+  }
+}
+
+function writeReadingList() {
+  const temporaryPath = `${READING_LIST_PATH}.${process.pid}.tmp`;
+  writeFileSync(
+    temporaryPath,
+    `${JSON.stringify(readingListDocument(readingListEntries), null, 2)}\n`,
+  );
+  renameSync(temporaryPath, READING_LIST_PATH);
+}
+
+function currentReadingList() {
+  return readingListEntries.map((entry) => ({ ...entry }));
+}
+
+function activeReadingListTarget() {
+  return [...managedViews.values()].find(
+    (candidate) => candidate.view === browserView,
+  );
+}
+
+function readingListCanAdd() {
+  const active = activeReadingListTarget();
+  return Boolean(
+    active &&
+      !active.private &&
+      /^https?:\/\//i.test(active.view.webContents.getURL()),
+  );
+}
+
+function addCurrentToReadingList() {
+  const active = activeReadingListTarget();
+  if (!active) throw new Error("active tab not found");
+  if (active.private) throw new Error("private tabs cannot use the reading list");
+  const url = active.view.webContents.getURL();
+  if (!/^https?:\/\//i.test(url)) {
+    throw new Error("reading list requires an HTTP(S) page");
+  }
+  readingListEntries = addReadingListEntry(readingListEntries, {
+    url,
+    title: active.view.webContents.getTitle(),
+    addedAt: new Date().toISOString(),
+  });
+  writeReadingList();
+  publishBrowserState();
+  return currentBrowserState();
+}
+
+function removeFromReadingList(url) {
+  readingListEntries = removeReadingListEntry(readingListEntries, url);
+  writeReadingList();
+  publishBrowserState();
+  return currentBrowserState();
 }
 
 function boundedWindowDimension(value, minimum, fallback) {
@@ -628,6 +704,8 @@ function currentBrowserState() {
     controlState: currentControlState(),
     bookmarks,
     history: currentHistory(),
+    readingList: currentReadingList(),
+    readingListCanAdd: readingListCanAdd(),
     downloads: currentDownloads(),
     extensions: currentExtensions(),
     taskSpaces: currentTaskSpaces(),
@@ -1846,6 +1924,7 @@ async function createPrimaryBrowserView({
 async function createWindow() {
   bookmarks = readBookmarks(join(PROFILE_DIR, "Default", "Bookmarks"));
   historyEntries = readHistory();
+  readingListEntries = readReadingList();
   const migrated = await readMigratedTabsManifest();
   const persisted = migrated ? null : await readPrimarySessionManifest();
   const persistedSpaces = await readSpaceSessionManifest();
@@ -2263,6 +2342,10 @@ ipcMain.handle("ego-lite:clear-history", () => {
   publishBrowserState();
   return currentBrowserState();
 });
+ipcMain.handle("ego-lite:add-reading-list", () => addCurrentToReadingList());
+ipcMain.handle("ego-lite:remove-reading-list", (_event, url) =>
+  removeFromReadingList(url),
+);
 ipcMain.handle("ego-lite:set-extension", (_event, value) =>
   setExtensionEnabled(value || {}),
 );

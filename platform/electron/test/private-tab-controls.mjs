@@ -324,6 +324,23 @@ try {
     await evaluate(
       connection,
       attached.sessionId,
+      "document.querySelector('#reading-list-list button[aria-label=\"Add current page to reading list\"]').click(); true",
+    );
+    const readingListFeatures = await waitFor(
+      "reading list toolbar",
+      async () => {
+        const value = await evaluate(
+          connection,
+          attached.sessionId,
+          "(() => ({urls: [...document.querySelectorAll('#reading-list-list button[data-reading-list-url]')].map((node) => node.dataset.readingListUrl), addDisabled: document.querySelector('#reading-list-list button[aria-label=\"Add current page to reading list\"]')?.disabled}))()",
+        );
+        return value?.urls?.some((url) => url.endsWith("/set")) ? value : null;
+      },
+    );
+
+    await evaluate(
+      connection,
+      attached.sessionId,
       "window.dispatchEvent(new KeyboardEvent('keydown', {key: 'n', code: 'KeyN', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true})); true",
     );
     const privateTab = await waitFor("private tab", async () => {
@@ -360,6 +377,14 @@ try {
         `private tab inherited persistent cookies: ${privateCookie.cookies}`,
       );
     }
+    const privateReadingList = await evaluate(
+      connection,
+      attached.sessionId,
+      "[...document.querySelectorAll('#reading-list-list button[data-reading-list-url]')].map((node) => node.dataset.readingListUrl)",
+    );
+    if (privateReadingList.some((url) => url.endsWith("/read"))) {
+      throw new Error("private tab was added to the reading list");
+    }
 
     await evaluate(
       connection,
@@ -388,6 +413,7 @@ try {
         toolbarFeatures,
         downloadFeatures,
         historyFeatures,
+        readingListFeatures,
         persistentOnly: persistentOnly.map((tab) => ({
           private: tab.private,
           url: tab.url,

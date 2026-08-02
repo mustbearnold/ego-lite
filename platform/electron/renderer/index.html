@@ -97,6 +97,10 @@
         position: relative;
       }
 
+      #reading-list-menu {
+        position: relative;
+      }
+
       #bookmark-menu summary {
         background: #1f2937;
         border: 1px solid #4b5563;
@@ -128,6 +132,23 @@
       }
 
       #history-menu summary::-webkit-details-marker {
+        display: none;
+      }
+
+      #reading-list-menu summary {
+        background: #1f2937;
+        border: 1px solid #4b5563;
+        border-radius: 6px;
+        color: #e5e7eb;
+        cursor: pointer;
+        font-size: 13px;
+        height: 34px;
+        list-style: none;
+        padding: 8px 10px;
+        white-space: nowrap;
+      }
+
+      #reading-list-menu summary::-webkit-details-marker {
         display: none;
       }
 
@@ -276,6 +297,44 @@
         text-overflow: ellipsis;
         white-space: nowrap;
         width: 100%;
+      }
+
+      #reading-list-list {
+        background: #1f2937;
+        border: 1px solid #4b5563;
+        border-radius: 6px;
+        display: grid;
+        gap: 6px;
+        min-width: 320px;
+        max-height: min(520px, calc(100vh - 72px));
+        overflow: auto;
+        padding: 6px;
+        position: absolute;
+        right: 0;
+        top: 40px;
+        z-index: 10;
+      }
+
+      .reading-row {
+        align-items: center;
+        display: flex;
+        gap: 6px;
+      }
+
+      .reading-row > button:first-child {
+        flex: 1;
+        font-size: 12px;
+        min-width: 0;
+        overflow: hidden;
+        text-align: left;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .reading-row > button:last-child {
+        font-size: 12px;
+        height: 28px;
+        min-width: 28px;
       }
 
       #extension-menu {
@@ -573,6 +632,10 @@
         <summary>History</summary>
         <div id="history-list" role="menu"></div>
       </details>
+      <details id="reading-list-menu">
+        <summary>Reading list</summary>
+        <div id="reading-list-list" role="menu"></div>
+      </details>
       <details id="extension-menu" hidden>
         <summary>Extensions</summary>
         <div id="extension-list" role="menu"></div>
@@ -617,6 +680,8 @@
       const bookmarkList = document.querySelector("#bookmark-list");
       const historyMenu = document.querySelector("#history-menu");
       const historyList = document.querySelector("#history-list");
+      const readingListMenu = document.querySelector("#reading-list-menu");
+      const readingListList = document.querySelector("#reading-list-list");
       const extensionMenu = document.querySelector("#extension-menu");
       const extensionList = document.querySelector("#extension-list");
       const downloadMenu = document.querySelector("#download-menu");
@@ -745,6 +810,62 @@
             }
           });
           historyList.append(clear);
+        }
+      }
+
+      function applyReadingList(entries = [], canAdd = false) {
+        readingListList.replaceChildren();
+        const add = document.createElement("button");
+        add.type = "button";
+        add.textContent = "Add current page";
+        add.disabled = !canAdd;
+        add.setAttribute("aria-label", "Add current page to reading list");
+        add.addEventListener("click", async () => {
+          try {
+            applyState(await window.egoLite.addReadingList());
+          } catch (error) {
+            status.textContent = error.message;
+          }
+        });
+        readingListList.append(add);
+
+        for (const entry of entries) {
+          const row = document.createElement("div");
+          row.className = "reading-row";
+          const open = document.createElement("button");
+          open.type = "button";
+          open.dataset.readingListUrl = entry.url;
+          open.textContent = entry.title || entry.url;
+          open.title = entry.url;
+          open.setAttribute(
+            "aria-label",
+            `Open reading list entry: ${entry.title || entry.url}`,
+          );
+          open.addEventListener("click", async () => {
+            try {
+              await window.egoLite.navigate(entry.url);
+              readingListMenu.open = false;
+            } catch (error) {
+              status.textContent = error.message;
+            }
+          });
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.textContent = "×";
+          remove.title = "Remove from reading list";
+          remove.setAttribute(
+            "aria-label",
+            `Remove reading list entry: ${entry.title || entry.url}`,
+          );
+          remove.addEventListener("click", async () => {
+            try {
+              applyState(await window.egoLite.removeReadingList(entry.url));
+            } catch (error) {
+              status.textContent = error.message;
+            }
+          });
+          row.append(open, remove);
+          readingListList.append(row);
         }
       }
 
@@ -1008,6 +1129,7 @@
         applyProfiles(state.profiles, state.profileId);
         applyBookmarks(state.bookmarks);
         applyHistory(state.history);
+        applyReadingList(state.readingList, state.readingListCanAdd);
         applyExtensions(state.extensions);
         applyDownloads(state.downloads);
         applySpaces(state.taskSpaces);

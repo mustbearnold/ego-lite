@@ -64,6 +64,8 @@ User downloads appear in the toolbar’s Downloads menu with progress, an Open a
 
 The History menu keeps the last 100 HTTP(S) visits for the active profile, excludes private tabs, opens entries in the active tab, and provides Clear history. Its persistence and toolbar behavior are covered by `npm run test:history` and the detached private-tab/download probe.
 
+The Reading list menu stores up to 100 HTTP(S) pages per profile. Add current page, reopen an entry, and remove it from the list; private tabs cannot add entries. Run `npm run test:reading-list` for the pure persistence contract; the detached private-tab/download probe covers the DOM path and private-tab exclusion.
+
 The native window restores its last usable position and size, keeps the normal bounds behind a maximized session, and restores maximized state on the next launch. The detached X11/Xvfb probe covers seed, resize, quit, and restart restoration:
 
 ```bash
