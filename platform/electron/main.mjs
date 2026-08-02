@@ -673,6 +673,24 @@ async function closeManagedView(targetId) {
   return { closed: true };
 }
 
+async function createUserTab() {
+  const primary = await createPrimaryBrowserView({
+    url: "about:blank",
+    tabId: `user-${randomUUID()}`,
+  });
+  setActiveBrowserView(primary.view);
+  return managedTabState();
+}
+
+async function closeActiveTab() {
+  const active = [...managedViews.entries()].find(
+    ([, managed]) => managed.view === browserView,
+  );
+  if (!active) return managedTabState();
+  await closeManagedView(active[0]);
+  return managedTabState();
+}
+
 function managedViewForTarget(targetId) {
   if (targetId) return managedViews.get(targetId)?.view || null;
   return browserView || null;
@@ -1311,6 +1329,8 @@ ipcMain.handle("ego-lite:import-data", () => requestProfileImport());
 ipcMain.handle("ego-lite:set-tab-group", (_event, value) =>
   updateTabGroup(value || {}),
 );
+ipcMain.handle("ego-lite:new-tab", () => createUserTab());
+ipcMain.handle("ego-lite:close-tab", () => closeActiveTab());
 ipcMain.handle("ego-lite:list-tabs", () => managedTabState());
 ipcMain.handle("ego-lite:activate-tab", (_event, targetId) => {
   const managed = managedViews.get(targetId);
