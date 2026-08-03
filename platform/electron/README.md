@@ -123,7 +123,13 @@ printf '%s\n' '{"version":1,"action":"tabs.list"}' | ego-lite --cli --automation
 
 The contract covers window state, the complete primary and Agent-Space tab
 inventory, Space listing, tab lifecycle/navigation/reload/stop/mute actions,
-and bookmark list/add/remove/open/toggle actions. Successful responses have
+editing commands (`tab.undo`, `tab.redo`, `tab.cut`, `tab.copy`,
+`tab.paste`, and `tab.select-all`), JavaScript execution, page save, PDF print,
+view source, and bookmark list/add/remove/open/toggle actions. `tab.execute`
+accepts `params.javascript`; `tab.save` and `tab.print` accept an explicit
+absolute or relative `params.path` (or the corresponding environment override
+used by detached runs), and `tab.save` accepts `params.as` values such as
+`only html`, `complete html`, or `single file`. Successful responses have
 `{"version":1,"ok":true,"result":...}`; invalid requests and unsupported
 operations return `ok: false` with a stable `error.code`. The detached probe
 exercises both the Electron bridge path and the headless standalone Chromium

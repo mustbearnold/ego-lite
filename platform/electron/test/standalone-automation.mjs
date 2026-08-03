@@ -153,6 +153,8 @@ try {
     fixtureServer.listen(0, "127.0.0.1", resolvePromise);
   });
   const fixtureUrl = `http://127.0.0.1:${fixtureServer.address().port}/fixture`;
+  const savedPath = join(profileRoot, "artifacts", "standalone-page.html");
+  const printedPath = join(profileRoot, "artifacts", "standalone-page.pdf");
 
   const initial = await automation({ version: 1, action: "state" });
   assert.equal(initial.capabilities.fullWindowInventory, false);
@@ -170,6 +172,39 @@ try {
     action: "tab.navigate",
     params: { id: tabId, url: fixtureUrl },
   });
+  const executed = await automation({
+    version: 1,
+    action: "tab.execute",
+    params: { id: tabId, javascript: "document.title + ':' + document.querySelector('main').textContent" },
+  });
+  assert.equal(executed.value, "Standalone automation:STANDALONE_AUTOMATION");
+  const saved = await automation({
+    version: 1,
+    action: "tab.save",
+    params: { id: tabId, path: savedPath },
+  });
+  assert.equal(saved.saved, true);
+  assert.match(await readFile(savedPath, "utf8"), /STANDALONE_AUTOMATION/);
+  const printed = await automation({
+    version: 1,
+    action: "tab.print",
+    params: { id: tabId, path: printedPath },
+  });
+  assert.equal(printed.printed, true);
+  assert.equal((await readFile(printedPath)).subarray(0, 4).toString(), "%PDF");
+  const source = await automation({
+    version: 1,
+    action: "tab.view-source",
+    params: { id: tabId },
+  });
+  assert.equal(
+    source.state.tabs.find((tab) => tab.id === source.tab.targetId)?.url,
+    `view-source:${fixtureUrl}`,
+  );
+  await automation({ version: 1, action: "tab.close", params: { id: source.tab.targetId } });
+  for (const action of ["tab.undo", "tab.redo", "tab.cut", "tab.copy", "tab.paste", "tab.select-all"]) {
+    await automation({ version: 1, action, params: { id: tabId } });
+  }
 
   const added = await automation({
     version: 1,

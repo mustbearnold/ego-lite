@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFile, rename, mkdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 export const AUTOMATION_VERSION = 1;
 
@@ -20,6 +20,16 @@ const AUTOMATION_ACTIONS = new Set([
   "tab.reload",
   "tab.stop",
   "tab.mute",
+  "tab.undo",
+  "tab.redo",
+  "tab.cut",
+  "tab.copy",
+  "tab.paste",
+  "tab.select-all",
+  "tab.execute",
+  "tab.save",
+  "tab.print",
+  "tab.view-source",
   "bookmarks.list",
   "bookmark.add",
   "bookmark.remove",
@@ -286,6 +296,150 @@ async function targetSession(host, id) {
   return { target, sessionId };
 }
 
+function automationOutputPath(value, message) {
+  const path = String(value || "").trim();
+  if (!path) throw new Error(message);
+  return resolve(path);
+}
+
+function runtimeValue(result) {
+  if (result.exceptionDetails) {
+    throw new Error(
+      result.exceptionDetails.text ||
+        result.exceptionDetails.description ||
+        "page JavaScript failed",
+    );
+  }
+  return result.result?.value;
+}
+
+async function standaloneTabCommand(host, request) {
+  const id = await selectAutomationTarget(host, request.params);
+  if (!id) throw new Error("a target id is required");
+  await setAutomationSelection(host, id);
+
+  if (request.action === "tab.view-source") {
+    const { sessionId } = await targetSession(host, id);
+    let url;
+    try {
+      url = runtimeValue(
+        await host.connection.request(
+          "Runtime.evaluate",
+          {
+            expression: "location.href",
+            returnByValue: true,
+          },
+          sessionId,
+        ),
+      );
+    } finally {
+      await host.connection
+        .request("Target.detachFromTarget", { sessionId })
+        .catch(() => {});
+    }
+    const parsed = new URL(String(url || ""));
+    if (!["file:", "http:", "https:"].includes(parsed.protocol)) {
+      throw new Error("view source is available for web pages and local files");
+    }
+    const result = await host.createTab(`view-source:${parsed.toString()}`);
+    await setAutomationSelection(host, result.targetId);
+    return { tab: result, state: await standaloneState(host) };
+  }
+
+  const { sessionId } = await targetSession(host, id);
+  try {
+    const editCommands = {
+      "tab.undo": "undo",
+      "tab.redo": "redo",
+      "tab.cut": "cut",
+      "tab.copy": "copy",
+      "tab.paste": "paste",
+      "tab.select-all": "selectAll",
+    };
+    if (editCommands[request.action]) {
+      const executed = runtimeValue(
+        await host.connection.request(
+          "Runtime.evaluate",
+          {
+            expression: `document.execCommand(${JSON.stringify(editCommands[request.action])})`,
+            returnByValue: true,
+          },
+          sessionId,
+        ),
+      );
+      return { command: editCommands[request.action], executed: Boolean(executed) };
+    }
+    if (request.action === "tab.execute") {
+      const javascript = String(request.params.javascript ?? request.params.script ?? "");
+      if (!javascript.trim()) throw new Error("tab.execute requires params.javascript");
+      const result = await host.connection.request(
+        "Runtime.evaluate",
+        {
+          expression: javascript,
+          awaitPromise: true,
+          returnByValue: true,
+        },
+        sessionId,
+      );
+      return { value: runtimeValue(result) ?? null };
+    }
+    if (request.action === "tab.save") {
+      const path = automationOutputPath(
+        request.params.path,
+        "tab.save requires params.path",
+      );
+      const format = String(request.params.as || "complete html")
+        .trim()
+        .toLowerCase();
+      if (["single file", "mhtml"].includes(format)) {
+        const result = await host.connection.request(
+          "Page.captureSnapshot",
+          { format: "mhtml" },
+          sessionId,
+        );
+        await mkdir(dirname(path), { recursive: true });
+        await writeFile(path, result.data || "", "utf8");
+      } else {
+        const html = runtimeValue(
+          await host.connection.request(
+            "Runtime.evaluate",
+            {
+              expression: `(() => {
+                const doctype = document.doctype ? '<!doctype ' + document.doctype.name + '>\\n' : '';
+                return doctype + document.documentElement.outerHTML;
+              })()`,
+              returnByValue: true,
+            },
+            sessionId,
+          ),
+        );
+        await mkdir(dirname(path), { recursive: true });
+        await writeFile(path, String(html || ""), "utf8");
+      }
+      return { saved: true, path };
+    }
+    if (request.action === "tab.print") {
+      const path = automationOutputPath(
+        request.params.path,
+        "tab.print requires params.path",
+      );
+      const result = await host.connection.request(
+        "Page.printToPDF",
+        { printBackground: true, preferCSSPageSize: true },
+        sessionId,
+      );
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, Buffer.from(result.data || "", "base64"));
+      return { printed: true, path, mode: "pdf" };
+    }
+  } finally {
+    await host.connection
+      .request("Target.detachFromTarget", { sessionId })
+      .catch(() => {});
+  }
+  throw new Error(`unsupported standalone tab command: ${request.action}`);
+}
+
 async function standaloneState(host) {
   const listedTabs = (await host.listTabs()).tabs || [];
   const rememberedTargetId = await readAutomationSelection(host);
@@ -411,6 +565,22 @@ export async function runStandaloneAutomation(host, request) {
     return automationSuccess({ closed: true, state: await standaloneState(host) });
   }
   if (request.action.startsWith("tab.")) {
+    if (
+      [
+        "tab.undo",
+        "tab.redo",
+        "tab.cut",
+        "tab.copy",
+        "tab.paste",
+        "tab.select-all",
+        "tab.execute",
+        "tab.save",
+        "tab.print",
+        "tab.view-source",
+      ].includes(request.action)
+    ) {
+      return automationSuccess(await standaloneTabCommand(host, request));
+    }
     return automationSuccess({ state: await standaloneTabAction(host, request) });
   }
   if (request.action === "bookmarks.list") {

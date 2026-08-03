@@ -46,10 +46,14 @@ printf '%s\n' '{"version":1,"action":"tab.create","params":{"url":"https://examp
 
 Responses always contain `version: 1` and `ok`; failures use a stable
 `error.code`. Supported actions cover window and Space inspection, tab creation,
-activation, closing, navigation, reload/stop, muting, and bookmark list/add/
-remove/open/toggle. When attached to Electron, the CLI uses the authenticated
+activation, closing, navigation, reload/stop, muting, editing
+(`tab.undo`, `tab.redo`, `tab.cut`, `tab.copy`, `tab.paste`, and
+`tab.select-all`), JavaScript execution, page save, PDF print, view source, and
+bookmark list/add/remove/open/toggle. `tab.execute` takes
+`params.javascript`; `tab.save` and `tab.print` require `params.path` when
+running standalone. When attached to Electron, the CLI uses the authenticated
 bridge and reports the complete managed-tab inventory. Against standalone
-Chromium it reports the active scope and supports the same tab/bookmark actions
+Chromium it reports the active scope and uses CDP for the same tab actions
 where Chromium exposes them.
 
 Tagged AppImage releases check for updates in the background and apply a downloaded update on the next launch; Debian and RPM installations use their package-manager update path. Set `EGO_LITE_DISABLE_AUTO_UPDATE=1` for offline or automated runs.

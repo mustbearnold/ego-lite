@@ -998,6 +998,16 @@ const AUTOMATION_ACTIONS = new Set([
   "tab.reload",
   "tab.stop",
   "tab.mute",
+  "tab.undo",
+  "tab.redo",
+  "tab.cut",
+  "tab.copy",
+  "tab.paste",
+  "tab.select-all",
+  "tab.execute",
+  "tab.save",
+  "tab.print",
+  "tab.view-source",
   "bookmarks.list",
   "bookmark.add",
   "bookmark.remove",
@@ -1120,6 +1130,85 @@ function automationBookmark(params = {}) {
   );
   if (!bookmark) throw new Error("bookmark not found");
   return bookmark;
+}
+
+function automationOutputPath(value, environmentVariable, message) {
+  const requested = String(value || "").trim();
+  const configured = requested
+    ? resolve(requested)
+    : configuredActionPath(environmentVariable);
+  if (!configured) throw new Error(message);
+  return actionFilePath(configured);
+}
+
+function automationSaveType(value) {
+  const format = String(value || "complete html").trim().toLowerCase();
+  if (["only html", "html only", "htmlonly"].includes(format)) {
+    return "HTMLOnly";
+  }
+  if (["single file", "mhtml"].includes(format)) return "MHTML";
+  return "HTMLComplete";
+}
+
+async function handleElectronTabCommand(target, action, params) {
+  const contents = target.managed.view.webContents;
+  const editCommands = {
+    "tab.undo": "undo",
+    "tab.redo": "redo",
+    "tab.cut": "cut",
+    "tab.copy": "copy",
+    "tab.paste": "paste",
+    "tab.select-all": "selectAll",
+  };
+  if (editCommands[action]) {
+    const method = editCommands[action];
+    if (typeof contents[method] !== "function") {
+      throw new Error(`Electron does not expose ${method} for this tab`);
+    }
+    contents[method]();
+    return {
+      command: method,
+      executed: true,
+      state: automationState(),
+    };
+  }
+  if (action === "tab.execute") {
+    const javascript = String(params.javascript ?? params.script ?? "");
+    if (!javascript.trim()) throw new Error("tab.execute requires params.javascript");
+    const value = await contents.executeJavaScript(javascript, true);
+    return { value: value ?? null, state: automationState() };
+  }
+  if (action === "tab.save") {
+    const path = automationOutputPath(
+      params.path,
+      "EGO_LITE_SAVE_PATH",
+      "tab.save requires params.path or EGO_LITE_SAVE_PATH",
+    );
+    await contents.savePage(path, automationSaveType(params.as));
+    return { saved: true, path, state: automationState() };
+  }
+  if (action === "tab.print") {
+    const path = automationOutputPath(
+      params.path,
+      "EGO_LITE_PRINT_TO_PDF_PATH",
+      "tab.print requires params.path or EGO_LITE_PRINT_TO_PDF_PATH",
+    );
+    const data = await contents.printToPDF({
+      printBackground: true,
+      preferCSSPageSize: true,
+    });
+    await writeFile(path, data);
+    return { printed: true, path, mode: "pdf", state: automationState() };
+  }
+  if (action === "tab.view-source") {
+    const targetId = await openViewSourceForManaged(target.managed);
+    const managed = managedViews.get(targetId);
+    return {
+      tab: managed ? automationTab(targetId, managed) : null,
+      state: automationState(),
+    };
+  }
+  throw new Error(`unsupported Electron tab command: ${action}`);
 }
 
 async function handleAutomationRequest(body) {
@@ -1272,6 +1361,28 @@ async function handleAutomationRequest(body) {
       target.managed.view.webContents.setAudioMuted(muted);
       publishBrowserState();
       return automationSuccess({ muted, state: automationState() });
+    }
+    if (
+      [
+        "tab.undo",
+        "tab.redo",
+        "tab.cut",
+        "tab.copy",
+        "tab.paste",
+        "tab.select-all",
+        "tab.execute",
+        "tab.save",
+        "tab.print",
+        "tab.view-source",
+      ].includes(body.action)
+    ) {
+      return automationSuccess(
+        await handleElectronTabCommand(
+          automationTarget(params),
+          body.action,
+          params,
+        ),
+      );
     }
     if (body.action === "bookmarks.list") {
       return automationSuccess({ bookmarks: automationState().bookmarks });
@@ -1839,16 +1950,16 @@ function viewSourceTargetUrl(value) {
   return `view-source:${normalized}`;
 }
 
-async function viewSourceActivePage() {
-  const source = managedRecordForView(browserView);
+async function openViewSourceForManaged(source) {
   if (!source) throw new Error("active tab not found");
-  const url = viewSourceTargetUrl(browserView.webContents.getURL());
+  const url = viewSourceTargetUrl(source.view.webContents.getURL());
   if (source.spaceId === null) {
     const primary = await createPrimaryBrowserView({
       url,
       privateMode: source.private,
     });
     setActiveBrowserView(primary.view);
+    return primary.targetId;
   } else {
     const task = await createManagedView({
       spaceId: source.spaceId,
@@ -1858,7 +1969,12 @@ async function viewSourceActivePage() {
     const view = managedViews.get(task.targetId)?.view;
     if (!view) throw new Error("view-source tab was not created");
     setActiveBrowserView(view);
+    return task.targetId;
   }
+}
+
+async function viewSourceActivePage() {
+  await openViewSourceForManaged(managedRecordForView(browserView));
   return managedTabState();
 }
 

@@ -172,6 +172,13 @@ try {
   );
   fixtureServer = createServer((request, response) => {
     const path = new URL(request.url, "http://127.0.0.1").pathname;
+    if (path === "/editor") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(
+        "<!doctype html><title>Automation Editor</title><main><div id=editor contenteditable=true>initial</div></main>",
+      );
+      return;
+    }
     const pages = {
       "/one": ["Automation One", "AUTOMATION_ONE"],
       "/two": ["Automation Two", "AUTOMATION_TWO"],
@@ -189,6 +196,9 @@ try {
   const oneUrl = pageUrl(port, "/one");
   const twoUrl = pageUrl(port, "/two");
   const spaceUrl = pageUrl(port, "/space");
+  const editorUrl = pageUrl(port, "/editor");
+  const savedPath = join(profileDir, "artifacts", "automation-page.html");
+  const printedPath = join(profileDir, "artifacts", "automation-page.pdf");
 
   electron = startElectron();
   const bridge = await waitFor("Electron bridge", readBridge);
@@ -251,6 +261,66 @@ try {
     const result = await automation({ version: 1, action: "tabs.list" });
     return result.tabs.find((tab) => tab.id === primaryTab.id)?.url === twoUrl;
   });
+
+  const executed = await automation({
+    version: 1,
+    action: "tab.execute",
+    params: {
+      id: primaryTab.id,
+      javascript: "document.title + ':' + document.querySelector('main').textContent",
+    },
+  });
+  assert.equal(executed.value, "Automation Two:AUTOMATION_TWO");
+  const saved = await automation({
+    version: 1,
+    action: "tab.save",
+    params: { id: primaryTab.id, path: savedPath, as: "complete html" },
+  });
+  assert.equal(saved.saved, true);
+  assert.match(await readFile(savedPath, "utf8"), /AUTOMATION_TWO/);
+  const printed = await automation({
+    version: 1,
+    action: "tab.print",
+    params: { id: primaryTab.id, path: printedPath },
+  });
+  assert.equal(printed.printed, true);
+  assert.equal((await readFile(printedPath)).subarray(0, 4).toString(), "%PDF");
+  const source = await automation({
+    version: 1,
+    action: "tab.view-source",
+    params: { id: primaryTab.id },
+  });
+  assert.equal(source.tab.url, `view-source:${twoUrl}`);
+  await automation({ version: 1, action: "tab.close", params: { id: source.tab.id } });
+  await automation({
+    version: 1,
+    action: "tab.navigate",
+    params: { id: primaryTab.id, url: editorUrl, activate: true },
+  });
+  const edit = await automation({
+    version: 1,
+    action: "tab.execute",
+    params: {
+      id: primaryTab.id,
+      javascript:
+        "(() => { const editor = document.querySelector('#editor'); editor.focus(); const range = document.createRange(); range.selectNodeContents(editor); range.collapse(false); const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range); document.execCommand('insertText', false, ' changed'); return editor.textContent; })()",
+    },
+  });
+  assert.equal(edit.value, "initial changed");
+  await automation({ version: 1, action: "tab.undo", params: { id: primaryTab.id } });
+  const undone = await automation({
+    version: 1,
+    action: "tab.execute",
+    params: { id: primaryTab.id, javascript: "document.querySelector('#editor').textContent" },
+  });
+  assert.equal(undone.value, "initial");
+  await automation({ version: 1, action: "tab.redo", params: { id: primaryTab.id } });
+  const redone = await automation({
+    version: 1,
+    action: "tab.execute",
+    params: { id: primaryTab.id, javascript: "document.querySelector('#editor').textContent" },
+  });
+  assert.equal(redone.value, "initial changed");
 
   const taskTab = await automation({
     version: 1,
