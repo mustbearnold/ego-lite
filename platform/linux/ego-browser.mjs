@@ -28,6 +28,10 @@ import {
   parseAutomationRequest,
   runStandaloneAutomation,
 } from "./automation.mjs";
+import {
+  parseAppleScript,
+  projectAppleScriptResponse,
+} from "./apple-script.mjs";
 
 const HOST_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_DIR = resolve(HOST_DIR, "../..");
@@ -194,6 +198,7 @@ Commands:
   ego-browser --launch
   ego-browser --reload
   ego-browser --automation < request.json
+  ego-browser --applescript < script.applescript
   ego-browser upgrade
   ego-browser --profile NAME
   ego-browser --server-name NAME
@@ -228,6 +233,13 @@ Automation:
   nested paths. standard.count/make/move accept each/new/at/to aliases,
   standard.move accepts a named/id-selected destination Space and sourceSpaceId
   when the standalone source is outside the selected scope.
+
+AppleScript compatibility:
+  --applescript translates one common AppleScript-style command into the typed
+  Linux automation contract. It supports tell application blocks plus common
+  application, window, tab, bookmark, count, exists, get, set, open, print,
+  save, execute, and standard-suite commands. It is a portable adapter, not
+  native AppleScript or full macOS specifier coercion.
 
 Migration:
   --migrate-profile imports bookmarks, browser settings, extensions, local
@@ -2535,6 +2547,19 @@ async function runAutomation(host, source) {
   }
 }
 
+async function runAppleScript(host, source) {
+  const parsed = parseAppleScript(source);
+  if (parsed?.ok === false) return parsed;
+  try {
+    const response = host.electronBridge
+      ? await host.electronBridge.request("/automation", parsed.request)
+      : await runStandaloneAutomation(host, parsed.request);
+    return projectAppleScriptResponse(response, parsed.projection);
+  } catch (error) {
+    return automationErrorResponse(error);
+  }
+}
+
 const EXTERNAL_TARGET_PROTOCOLS = new Set(["file:", "http:", "https:"]);
 
 function normalizeExternalTarget(value, cwd = process.cwd()) {
@@ -2598,6 +2623,8 @@ function parseArgs(argv) {
       command = "reload";
     } else if (arg === "--automation") {
       command = "automation";
+    } else if (arg === "--applescript") {
+      command = "applescript";
     } else if (arg === "upgrade" || arg === "--upgrade") {
       command = "upgrade";
     } else if (arg === "--migrate-profile") {
@@ -2694,6 +2721,12 @@ export async function runHost(argv = process.argv.slice(2)) {
   const host = await connectToChromium(serverName, profileId);
   if (command === "automation") {
     const response = await runAutomation(host, await readStdin());
+    process.stdout.write(`${JSON.stringify(response)}\n`);
+    host.connection.close();
+    return response?.ok === true ? 0 : 1;
+  }
+  if (command === "applescript") {
+    const response = await runAppleScript(host, await readStdin());
     process.stdout.write(`${JSON.stringify(response)}\n`);
     host.connection.close();
     return response?.ok === true ? 0 : 1;

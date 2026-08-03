@@ -160,6 +160,28 @@ npm run test:automation
 npm run test:standalone-automation
 ```
 
+The packaged CLI also exposes a portable AppleScript-style compatibility
+adapter for common macOS scripting-dictionary callers. Pass one command on
+stdin with `--applescript`; it works through the authenticated Electron bridge
+and the standalone fallback, and detached runs stay inside Xvfb:
+
+```bash
+printf '%s\n' 'get URL of active tab' | ego-lite --cli --applescript
+printf '%s\n' 'count tabs' | ego-lite --cli --applescript
+```
+
+The subset covers application/window/tab/bookmark specifiers, `get`, `count`,
+`exists`, `set`, `open`, explicit-file `print`/`save`, `execute javascript`,
+tab editing/navigation, and the covered standard-suite mutations. Scalar
+queries return `result.value`; mutating commands retain the typed automation
+result. Native AppleScript parsing, multi-statement execution, full implicit
+specifier coercion, and the native macOS print dialog are intentionally not
+claimed. Run the focused source/Electron probe with:
+
+```bash
+npm run test:apple-script
+```
+
 User downloads appear in the toolbar’s Downloads menu with progress, an Open action that uses the Linux desktop default application, and a Show action. Primary-tab downloads use `EGO_LITE_DOWNLOAD_DIR` when set, otherwise the normal `~/Downloads` directory; task-Space downloads retain the SDK/CDP-selected download path.
 
 The History menu keeps the last 100 HTTP(S) visits for the active profile, excludes private tabs, opens entries in the active tab, and provides Clear history. Its persistence and toolbar behavior are covered by `npm run test:history` and the detached private-tab/download probe.

@@ -606,6 +606,7 @@ async function selectAutomationTarget(host, params = {}, tabs = null) {
 }
 
 function hasTabSpecifier(params = {}) {
+  if (params.active === true) return false;
   const specifier = standardSpecifierValue(params);
   return [
     params.id,
@@ -1194,6 +1195,7 @@ function standardCandidates(state, kindValue) {
 }
 
 function standardMatches(candidate, params = {}) {
+  if (params.active === true && !candidate.active) return false;
   const specifier = standardSpecifierValue(params);
   if (
     specifier !== undefined &&
@@ -1227,6 +1229,18 @@ function standardMatches(candidate, params = {}) {
     if (!candidateIds.includes(String(id))) return false;
   }
   if (fields.url !== undefined && String(candidate.url || "") !== String(fields.url)) {
+    return false;
+  }
+  if (
+    fields.folder !== undefined &&
+    String(candidate.folder || "").toLowerCase() !== String(fields.folder).toLowerCase()
+  ) {
+    return false;
+  }
+  if (
+    fields.folderId !== undefined &&
+    String(candidate.folderId ?? candidate.parentId ?? "") !== String(fields.folderId)
+  ) {
     return false;
   }
   if (name !== undefined) {

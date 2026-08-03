@@ -1319,6 +1319,7 @@ function standardCandidates(state, kindValue) {
 }
 
 function hasStandardSpecifier(params = {}) {
+  if (params.active === true) return false;
   const specifier = standardSpecifierValue(params);
   return [
     params.id,
@@ -1332,6 +1333,7 @@ function hasStandardSpecifier(params = {}) {
 }
 
 function standardMatches(candidate, params = {}) {
+  if (params.active === true && !candidate.active) return false;
   const specifier = standardSpecifierValue(params);
   if (
     specifier !== undefined &&
@@ -1365,6 +1367,18 @@ function standardMatches(candidate, params = {}) {
     if (!candidateIds.includes(String(id))) return false;
   }
   if (fields.url !== undefined && String(candidate.url || "") !== String(fields.url)) {
+    return false;
+  }
+  if (
+    fields.folder !== undefined &&
+    String(candidate.folder || "").toLowerCase() !== String(fields.folder).toLowerCase()
+  ) {
+    return false;
+  }
+  if (
+    fields.folderId !== undefined &&
+    String(candidate.folderId ?? candidate.parentId ?? "") !== String(fields.folderId)
+  ) {
     return false;
   }
   if (name !== undefined) {
@@ -4553,6 +4567,8 @@ async function createWindow() {
   mainWindow = new BrowserWindow({
     width: windowState?.width || WINDOW_DEFAULT_WIDTH,
     height: windowState?.height || WINDOW_DEFAULT_HEIGHT,
+    show: !CLI_MODE,
+    ...(CLI_MODE ? { skipTaskbar: true } : {}),
     ...(windowState?.x !== undefined ? { x: windowState.x } : {}),
     ...(windowState?.y !== undefined ? { y: windowState.y } : {}),
     minWidth: WINDOW_MIN_WIDTH,

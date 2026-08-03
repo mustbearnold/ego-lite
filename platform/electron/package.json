@@ -56,6 +56,7 @@
     "test:page-actions": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/page-actions.mjs",
     "test:automation": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/automation.mjs",
     "test:standalone-automation": "node test/standalone-automation.mjs",
+    "test:apple-script": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/apple-script.mjs",
     "test:snapshot-contract": "node test/snapshot-contract.mjs",
     "test:stale-cdp-probe": "node test/stale-cdp-probe.mjs",
     "test:frame-snapshot": "npm run build:sdk && ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/frame-snapshot.mjs",
@@ -116,6 +117,10 @@
       {
         "from": "../linux/automation.mjs",
         "to": "ego-lite/linux/automation.mjs"
+      },
+      {
+        "from": "../linux/apple-script.mjs",
+        "to": "ego-lite/linux/apple-script.mjs"
       },
       {
         "from": "../linux/server-name.mjs",

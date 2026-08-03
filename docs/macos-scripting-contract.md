@@ -16,9 +16,11 @@ closed-source macOS app exposes a stable API beyond the inspected build.
 
 The bundle's `scripting.sdef` defines an AppleScript object model consisting of
 an application, windows, tabs, bookmark folders, and bookmark items. The Linux
-port uses authenticated versioned JSON because AppleScript is not available on
-Linux; the JSON actions below are the transport-level equivalent, not an
-attempt to emulate AppleScript syntax or specifier resolution.
+port keeps the authenticated versioned JSON contract as its native transport
+and now adds a portable `--applescript` adapter for a deliberately bounded
+subset of the observed syntax. The adapter is useful for scripts that need to
+move between hosts, but it is not native AppleScript and does not reproduce all
+of macOS's implicit specifier coercion.
 
 The JSON response keeps the original flat `bookmarks` array for existing
 clients and adds `bookmarkItems` plus nested `bookmarkFolders`. Linux keeps an
@@ -86,10 +88,36 @@ the destination first loads, while standalone CDP rebuilds a bounded URL
 history and restores safe form/scroll state. Password/file controls, storage
 areas, POST bodies, and non-serializable application state are intentionally
 not copied. The response reports best-effort `preservation.history` and
-`preservation.interaction` statuses. AppleScript syntax and its full implicit
-specifier coercion are not reproduced.
+`preservation.interaction` statuses. Native AppleScript syntax and its full
+implicit specifier coercion are not reproduced; the portable subset is described
+below.
 
 Electron delegates save to Chromium's page archive and print to Chromium's PDF
 output. The standalone host supports HTML/DOM serialization and MHTML capture
 through CDP, and writes a PDF directly; it does not reproduce the native macOS
 print dialog or every asset-handling detail of a desktop page save.
+
+## Portable AppleScript-style adapter
+
+Both the standalone host and the Electron packaged CLI accept one command per
+invocation on standard input:
+
+```bash
+printf '%s\n' 'get URL of active tab' | ego-lite --applescript
+printf '%s\n' 'count tabs' | ego-lite --cli --applescript
+```
+
+The adapter accepts the observed `tell application` wrapper for `ego lite`,
+`Chromium`, and compatible ego-browser names. It translates application
+properties and commands, window and tab specifiers, bookmark folders/items,
+`get`, `count`, `exists`, `set URL`/window name, `open`, `print`, `save`,
+`execute javascript`, tab editing/navigation commands, and the covered
+standard-suite `delete`, `duplicate`, `make new`, and `move` forms. `get`,
+`count`, and `exists` return their value under `result.value`; mutating commands
+retain the typed automation result so callers can inspect the resulting state.
+
+The adapter intentionally rejects multiple statements, unsupported application
+targets, and forms it cannot translate. Print and save use explicit `in file`
+paths (or the existing typed environment overrides); native AppleScript
+execution, full coercion, AppleScript records beyond the supported property
+forms, and the native macOS print dialog remain outside this Linux boundary.

@@ -277,10 +277,14 @@ install_linux() {
 	package_dir="$REPO_DIR/package/ego-browser"
 	host_source="$REPO_DIR/platform/linux/ego-browser.mjs"
 	automation_source="$REPO_DIR/platform/linux/automation.mjs"
+	apple_script_source="$REPO_DIR/platform/linux/apple-script.mjs"
+	server_name_source="$REPO_DIR/platform/linux/server-name.mjs"
 	[ -d "$package_dir" ] ||
 		die "Linux installation must run from the ego-lite-linux checkout; package/ego-browser was not found"
 	[ -f "$host_source" ] || die "Linux host source was not found: $host_source"
 	[ -f "$automation_source" ] || die "Linux automation source was not found: $automation_source"
+	[ -f "$apple_script_source" ] || die "AppleScript adapter source was not found: $apple_script_source"
+	[ -f "$server_name_source" ] || die "Linux server-name source was not found: $server_name_source"
 	require_command node
 	require_command npm
 	require_command install
@@ -306,6 +310,10 @@ install_linux() {
 		die "failed to install the Linux browser host"
 	cp "$automation_source" "$LINUX_INSTALL_DIR/linux/automation.mjs" ||
 		die "failed to install the Linux automation contract"
+	cp "$apple_script_source" "$LINUX_INSTALL_DIR/linux/apple-script.mjs" ||
+		die "failed to install the portable AppleScript adapter"
+	cp "$server_name_source" "$LINUX_INSTALL_DIR/linux/server-name.mjs" ||
+		die "failed to install the Linux server-name helper"
 	chmod 0755 "$LINUX_INSTALL_DIR/linux/ego-browser.mjs"
 
 	for command_name in ego-browser ego-lite; do
