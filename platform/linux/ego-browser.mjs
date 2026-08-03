@@ -223,7 +223,9 @@ Automation:
   tab.undo/redo/cut/copy/paste/select-all/execute/save/print/view-source,
   window.set-name/minimize/restore/maximize/unmaximize, and bookmarks.list
   plus bookmark.folder.add/rename/remove/move/reorder and
-  bookmark.add/remove/open/toggle.
+  bookmark.add/remove/open/toggle. Standard tab selectors accept id, name/title,
+  URL, or 1-based index; standard.move accepts a named/id-selected destination
+  Space and sourceSpaceId when the standalone source is outside the selected scope.
 
 Migration:
   --migrate-profile imports bookmarks, browser settings, extensions, local
@@ -744,6 +746,18 @@ class LinuxEgoHost {
     return { ...space };
   }
 
+  async usePrimaryScope() {
+    this.selectedSpaceId = null;
+    const tabs = await this.listTabs();
+    if (
+      !this.selectedTargetId ||
+      !tabs.tabs.some((tab) => tab.targetId === this.selectedTargetId)
+    ) {
+      this.selectedTargetId = tabs.tabs[0]?.targetId || null;
+    }
+    return { id: null, tabs: tabs.tabs };
+  }
+
   async claimTaskSpace(id, name) {
     const space = this.findSpace(id);
     if (!space)
@@ -1169,14 +1183,21 @@ class LinuxEgoHost {
     await this.connection.request("Target.activateTarget", { targetId });
   }
 
-  async closeTarget(targetId) {
+  async closeTarget(
+    targetId,
+    { preserveSpace = false, suppressReopen = false } = {},
+  ) {
     if (this.isElectron) {
       if (!this.electronBridge) {
         fail(
           "Electron bridge is unavailable. Restart the ego lite Electron app before closing tabs.",
         );
       }
-      await this.electronBridge.request("/close-tab", { targetId });
+      await this.electronBridge.request("/close-tab", {
+        targetId,
+        preserveSpace,
+        suppressReopen,
+      });
       return;
     }
     await this.connection.request("Target.closeTarget", { targetId });

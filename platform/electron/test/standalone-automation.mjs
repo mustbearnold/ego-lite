@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -159,6 +159,26 @@ async function removeProfileRoot() {
 }
 
 try {
+  await writeFile(
+    statePath,
+    `${JSON.stringify({
+      version: 1,
+      nextId: 2,
+      spaces: [
+        {
+          taskId: "standalone-space",
+          id: 1,
+          name: "Standalone Space",
+          createdBy: "agent",
+          ownership: "agent",
+          createdAt: new Date().toISOString(),
+          contextId: null,
+          mode: "context",
+          tabTargetIds: [],
+        },
+      ],
+    })}\n`,
+  );
   fixtureServer = createServer((_request, response) => {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     response.end("<!doctype html><title>Standalone automation</title><main>STANDALONE_AUTOMATION</main>");
@@ -185,7 +205,7 @@ try {
     params: { url: fixtureUrl },
   });
   assert.ok(created.tab.targetId);
-  const tabId = created.tab.targetId;
+  let tabId = created.tab.targetId;
   await automation({
     version: 1,
     action: "tab.navigate",
@@ -224,6 +244,31 @@ try {
   for (const action of ["tab.undo", "tab.redo", "tab.cut", "tab.copy", "tab.paste", "tab.select-all"]) {
     await automation({ version: 1, action, params: { id: tabId } });
   }
+  const movedIntoSpace = await automation({
+    version: 1,
+    action: "standard.move",
+    params: {
+      kind: "tab",
+      id: tabId,
+      spaceId: "Standalone Space",
+    },
+  });
+  assert.equal(movedIntoSpace.moved, true);
+  assert.equal(movedIntoSpace.tab.spaceId, 1);
+  const movedBackToPrimary = await automation({
+    version: 1,
+    action: "standard.move",
+    params: {
+      kind: "tab",
+      id: movedIntoSpace.tab.targetId,
+      sourceSpaceId: "Standalone Space",
+      destinationSpaceId: null,
+      index: 1,
+    },
+  });
+  assert.equal(movedBackToPrimary.moved, true);
+  assert.equal(movedBackToPrimary.tab.spaceId, null);
+  tabId = movedBackToPrimary.tab.targetId;
 
   const folderAdded = await automation({
     version: 1,
@@ -320,15 +365,28 @@ try {
     params: { kind: "tab", id: standardOpened.tab.targetId },
   });
   assert.equal(standardDuplicate.duplicated, true);
-  await automation({
+  const standardExistsByUrl = await automation({
     version: 1,
-    action: "standard.delete",
-    params: { kind: "tab", id: standardDuplicate.tab.targetId },
+    action: "standard.exists",
+    params: { kind: "tab", url: `${fixtureUrl}?standard-open=1` },
   });
+  assert.equal(standardExistsByUrl.exists, true);
+  const standardDeletedByUrl = await automation({
+    version: 1,
+    action: "standard.delete",
+    params: { kind: "tab", url: `${fixtureUrl}?standard-open=1` },
+  });
+  assert.equal(standardDeletedByUrl.deleted, true);
+  const standardExistsByIndex = await automation({
+    version: 1,
+    action: "standard.exists",
+    params: { kind: "tab", index: 2 },
+  });
+  assert.equal(standardExistsByIndex.exists, true);
   await automation({
     version: 1,
     action: "standard.delete",
-    params: { kind: "tab", id: standardOpened.tab.targetId },
+    params: { kind: "tab", url: `${fixtureUrl}?standard-open=1` },
   });
   const standardFolder = await automation({
     version: 1,

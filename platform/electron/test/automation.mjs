@@ -260,18 +260,30 @@ try {
     params: { kind: "tab", id: standardOpened.tab.id },
   });
   assert.equal(standardDuplicate.duplicated, true);
+  const standardExistsByUrl = await automation({
+    version: 1,
+    action: "standard.exists",
+    params: { kind: "tab", url: twoUrl },
+  });
+  assert.equal(standardExistsByUrl.exists, true);
+  const standardDeletedByUrl = await automation({
+    version: 1,
+    action: "standard.delete",
+    params: { kind: "tab", url: twoUrl },
+  });
+  assert.equal(standardDeletedByUrl.deleted, true);
+  const standardExistsByIndex = await automation({
+    version: 1,
+    action: "standard.exists",
+    params: { kind: "tab", index: 2 },
+  });
+  assert.equal(standardExistsByIndex.exists, true);
   const standardDeletedDuplicate = await automation({
     version: 1,
     action: "standard.delete",
     params: { kind: "tab", id: standardDuplicate.tab.id },
   });
   assert.equal(standardDeletedDuplicate.deleted, true);
-  const standardDeletedOpened = await automation({
-    version: 1,
-    action: "standard.delete",
-    params: { kind: "tab", id: standardOpened.tab.id },
-  });
-  assert.equal(standardDeletedOpened.deleted, true);
   const standardFolder = await automation({
     version: 1,
     action: "standard.make",
@@ -468,6 +480,29 @@ try {
   });
   assert.equal(taskTab.tab.spaceId, 1);
   assert.equal(taskTab.tab.active, false);
+  const movedIntoSpace = await automation({
+    version: 1,
+    action: "standard.move",
+    params: {
+      kind: "tab",
+      id: primaryTab.id,
+      spaceId: "Automation Space",
+    },
+  });
+  assert.equal(movedIntoSpace.moved, true);
+  assert.equal(movedIntoSpace.tab.spaceId, 1);
+  const movedBackToPrimary = await automation({
+    version: 1,
+    action: "standard.move",
+    params: {
+      kind: "tab",
+      id: movedIntoSpace.tab.id,
+      destinationSpaceId: null,
+      index: 1,
+    },
+  });
+  assert.equal(movedBackToPrimary.moved, true);
+  assert.equal(movedBackToPrimary.tab.spaceId, null);
   await automation({ version: 1, action: "tab.activate", params: { id: taskTab.tab.id } });
   const activatedTask = await automation({ version: 1, action: "state" });
   assert.equal(activatedTask.activeTabId, taskTab.tab.id);

@@ -70,8 +70,15 @@ The generic AppleScript commands are available through typed JSON actions:
 `standard.count`, `standard.exists`, `standard.delete`,
 `standard.duplicate`, `standard.make`, and `standard.move`. They accept a
 `kind` such as `window`, `tab`, `space`, `bookmarkFolder`, or `bookmarkItem`.
-These preserve explicit IDs and indices; AppleScript's implicit object
-specifier coercion is intentionally not reproduced.
+Tab and standard-object selectors accept an `id`/`targetId`, `name`/`title`,
+`url`, or a 1-based `index`; delete, duplicate, activate, and other tab actions
+resolve those selectors instead of silently falling back to the active tab.
+`standard.move` accepts `spaceId`, `destinationSpaceId`, or a Space name/task id
+for tab moves, and `sourceSpaceId` when the source is outside the currently
+selected standalone scope. Cross-Space moves recreate the destination view from
+the tab URL so the isolation boundary remains intact; transient page state and
+history are not promised to survive. AppleScript syntax and its full implicit
+specifier coercion are not reproduced.
 
 Electron delegates save to Chromium's page archive and print to Chromium's PDF
 output. The standalone host supports HTML/DOM serialization and MHTML capture

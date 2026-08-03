@@ -576,6 +576,14 @@ async function setAutomationSelection(host, targetIdValue) {
 
 async function selectAutomationTarget(host, params = {}, tabs = null) {
   const listedTabs = tabs || (await host.listTabs()).tabs || [];
+  if (hasTabSpecifier(params)) {
+    const match = listedTabs.find((tab, index) =>
+      tabMatchesSpecifier(tab, params, index + 1),
+    );
+    if (!match) throw new Error("automation tab specifier did not match a tab");
+    host.selectedTargetId = match.targetId;
+    return match.targetId;
+  }
   const rememberedTargetId = await readAutomationSelection(host);
   const selected = targetId(
     params,
@@ -587,6 +595,38 @@ async function selectAutomationTarget(host, params = {}, tabs = null) {
     host.selectedTargetId = selected;
   }
   return selected;
+}
+
+function hasTabSpecifier(params = {}) {
+  return [
+    params.id,
+    params.targetId,
+    params.name,
+    params.title,
+    params.url,
+    params.index,
+  ].some((value) => value !== undefined && value !== null && String(value) !== "");
+}
+
+function tabMatchesSpecifier(tab, params = {}, index) {
+  const id = params.id ?? params.targetId;
+  if (id !== undefined && id !== null && String(id) !== "") {
+    if (String(tab.targetId ?? tab.id ?? "") !== String(id)) return false;
+  }
+  const name = params.name ?? params.title;
+  if (name !== undefined && String(tab.title || "") !== String(name)) {
+    return false;
+  }
+  if (params.url !== undefined && String(tab.url || "") !== String(params.url)) {
+    return false;
+  }
+  if (params.index !== undefined) {
+    const requestedIndex = Number(params.index);
+    if (!Number.isInteger(requestedIndex) || requestedIndex !== index) {
+      return false;
+    }
+  }
+  return true;
 }
 
 async function targetSession(host, id) {
@@ -755,9 +795,12 @@ async function standaloneState(host) {
   if (activeTabId) host.selectedTargetId = activeTabId;
   const spaces = (await host.listTaskSpaces()).taskSpaces || [];
   const bookmarkModel = await readStandaloneBookmarkModel(host.profileDir);
-  const tabs = listedTabs.map((tab) => ({
-    id: tab.targetId,
+  const tabs = listedTabs.map((tab, index) => ({
     ...tab,
+    id: tab.targetId,
+    index: index + 1,
+    spaceId: host.currentSpace()?.id ?? null,
+    spaceName: host.currentSpace()?.name || null,
     active: tab.targetId === activeTabId,
   }));
   const activeTab = tabs.find((tab) => tab.active) || null;
@@ -837,7 +880,8 @@ function standardKind(value) {
 
 function standardCandidates(state, kindValue) {
   const kind = standardKind(kindValue);
-  switch (kind) {
+  const candidates = (() => {
+    switch (kind) {
     case "windows":
       return [{ ...state.window }];
     case "tabs":
@@ -850,7 +894,13 @@ function standardCandidates(state, kindValue) {
       return flattenStandaloneBookmarkFolders(state.bookmarkFolders);
     default:
       return [];
-  }
+    }
+  })();
+  return candidates.map((candidate, index) =>
+    candidate.index === undefined && kind !== "bookmarkItems" && kind !== "bookmarkFolders"
+      ? { ...candidate, index: index + 1 }
+      : candidate,
+  );
 }
 
 function standardMatches(candidate, params = {}) {
@@ -877,6 +927,62 @@ function standardMatches(candidate, params = {}) {
 function standardFind(state, params = {}) {
   const candidates = standardCandidates(state, params.kind ?? params.type);
   return candidates.find((candidate) => standardMatches(candidate, params)) || null;
+}
+
+function destinationSpaceValue(params = {}) {
+  if (params.destinationSpaceId !== undefined) return params.destinationSpaceId;
+  if (params.spaceId !== undefined) return params.spaceId;
+  if (params.destinationSpace !== undefined) return params.destinationSpace;
+  if (params.space !== undefined) return params.space;
+  return undefined;
+}
+
+async function resolveStandaloneSpaceId(host, value) {
+  if (value === null) return null;
+  if (value === undefined) {
+    throw new Error("standard.move tab requires a destination Space");
+  }
+  const raw =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? value.id ?? value.taskId ?? value.name
+      : value;
+  const text = String(raw ?? "").trim();
+  if (["", "primary", "window", "application"].includes(text.toLowerCase())) {
+    return null;
+  }
+  const spaces = (await host.listTaskSpaces()).taskSpaces || [];
+  const numeric = Number(text);
+  const match = spaces.find(
+    (space) =>
+      (Number.isInteger(numeric) && Number(space.id) === numeric) ||
+      String(space.taskId || "") === text ||
+      String(space.name || "") === text,
+  );
+  if (!match) throw new Error(`task Space not found: ${text}`);
+  return Number(match.id);
+}
+
+async function useStandaloneScope(host, spaceId) {
+  if (spaceId === null) return host.usePrimaryScope();
+  return host.useTaskSpace(spaceId);
+}
+
+async function createStandaloneMovedTab(host, spaceId, url) {
+  await useStandaloneScope(host, spaceId);
+  const before = (await host.listTabs()).tabs || [];
+  const blank =
+    before.length === 1 &&
+    ["about:blank", "chrome://newtab/"].includes(before[0].url);
+  const tab = await host.createTab(url || "about:blank");
+  if (blank && blank.targetId !== tab.targetId) {
+    await host
+      .closeTarget(blank.targetId, {
+        preserveSpace: true,
+        suppressReopen: true,
+      })
+      .catch(() => {});
+  }
+  return tab;
 }
 
 async function standaloneTabAction(host, request) {
@@ -1097,6 +1203,69 @@ export async function runStandaloneAutomation(host, request) {
     const kind = standardKind(
       request.params.kind ?? request.params.type ?? "bookmarkItems",
     );
+    if (kind === "tabs") {
+      if (request.params.sourceSpaceId !== undefined) {
+        const sourceSpaceId = await resolveStandaloneSpaceId(
+          host,
+          request.params.sourceSpaceId,
+        );
+        await useStandaloneScope(host, sourceSpaceId);
+      }
+      const state = await standaloneState(host);
+      const sourceParams = { ...request.params, kind };
+      delete sourceParams.index;
+      if (request.params.sourceIndex !== undefined) {
+        sourceParams.index = request.params.sourceIndex;
+      }
+      const source = standardFind(state, sourceParams);
+      if (!source) throw new Error("standard.move tab not found");
+      const sourceSpaceId = state.scope;
+      const destinationSpaceId = await resolveStandaloneSpaceId(
+        host,
+        destinationSpaceValue(request.params),
+      );
+      if (sourceSpaceId === destinationSpaceId) {
+        return automationSuccess({
+          moved: true,
+          changed: false,
+          kind,
+          tab: source,
+          state,
+        });
+      }
+      if (source.private && destinationSpaceId !== null) {
+        throw new Error("private tabs cannot move into an Agent Space");
+      }
+      const movedTab = await createStandaloneMovedTab(
+        host,
+        destinationSpaceId,
+        source.url || "about:blank",
+      );
+      if (sourceSpaceId === null && destinationSpaceId !== null) {
+        await useStandaloneScope(host, null);
+        await host.createTab("about:blank");
+      }
+      await useStandaloneScope(host, sourceSpaceId);
+      await host.closeTarget(source.targetId, {
+        preserveSpace: true,
+        suppressReopen: true,
+      });
+      await useStandaloneScope(host, destinationSpaceId);
+      await host.activateTarget(movedTab.targetId);
+      await setAutomationSelection(host, movedTab.targetId);
+      const finalState = await standaloneState(host);
+      return automationSuccess({
+        moved: true,
+        kind,
+        fromSpaceId: sourceSpaceId,
+        spaceId: destinationSpaceId,
+        tab:
+          finalState.tabs.find((tab) => tab.targetId === movedTab.targetId) ||
+          finalState.tabs.find((tab) => tab.id === movedTab.targetId) ||
+          movedTab,
+        state: finalState,
+      });
+    }
     if (kind !== "bookmarkItems" && kind !== "bookmarkFolders") {
       return automationFailure(
         "EGO_AUTOMATION_UNSUPPORTED",

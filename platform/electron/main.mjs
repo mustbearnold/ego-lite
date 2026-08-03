@@ -996,6 +996,7 @@ function createProfile({ name }) {
 function managedTabState() {
   return [...managedViews.entries()].map(([targetId, managed]) => ({
     targetId,
+    index: managedTabIndex(targetId, managed.spaceId),
     spaceId: managed.spaceId,
     spaceName: managed.spaceName || null,
     private: Boolean(managed.private),
@@ -1007,6 +1008,16 @@ function managedTabState() {
     tabGroup: managed.tabGroup || null,
     active: managed.view === browserView,
   }));
+}
+
+function managedTabIndex(targetId, spaceId) {
+  let index = 0;
+  for (const [candidateId, managed] of managedViews) {
+    if (managed.spaceId !== spaceId) continue;
+    index += 1;
+    if (candidateId === targetId) return index;
+  }
+  return null;
 }
 
 const AUTOMATION_VERSION = 1;
@@ -1126,6 +1137,7 @@ function automationTab(targetId, managed) {
   return {
     id: targetId,
     targetId,
+    index: managedTabIndex(targetId, managed.spaceId),
     spaceId: managed.spaceId,
     spaceName: managed.spaceName || null,
     private: Boolean(managed.private),
@@ -1165,6 +1177,15 @@ function automationTarget(params = {}) {
   const requested = params.id ?? params.targetId;
   if (requested !== undefined && requested !== null && String(requested)) {
     const targetId = String(requested);
+    const managed = managedViews.get(targetId);
+    if (!managed) throw new Error(`Electron target not found: ${targetId}`);
+    return { targetId, managed };
+  }
+  if (hasStandardSpecifier(params)) {
+    const state = automationState();
+    const matched = standardFind(state, { ...params, kind: "tabs" });
+    if (!matched) throw new Error("automation tab specifier did not match a tab");
+    const targetId = String(matched.id ?? matched.targetId ?? "");
     const managed = managedViews.get(targetId);
     if (!managed) throw new Error(`Electron target not found: ${targetId}`);
     return { targetId, managed };
@@ -1247,7 +1268,8 @@ function standardKind(value) {
 
 function standardCandidates(state, kindValue) {
   const kind = standardKind(kindValue);
-  switch (kind) {
+  const candidates = (() => {
+    switch (kind) {
     case "windows":
       return [{ ...state.window }];
     case "tabs":
@@ -1260,7 +1282,24 @@ function standardCandidates(state, kindValue) {
       return flattenAutomationFolders(state.bookmarkFolders);
     default:
       return [];
-  }
+    }
+  })();
+  return candidates.map((candidate, index) =>
+    candidate.index === undefined && kind !== "bookmarkItems" && kind !== "bookmarkFolders"
+      ? { ...candidate, index: index + 1 }
+      : candidate,
+  );
+}
+
+function hasStandardSpecifier(params = {}) {
+  return [
+    params.id,
+    params.targetId,
+    params.name,
+    params.title,
+    params.url,
+    params.index,
+  ].some((value) => value !== undefined && value !== null && String(value) !== "");
 }
 
 function standardMatches(candidate, params = {}) {
@@ -1634,6 +1673,29 @@ async function handleAutomationRequest(body) {
     }
     if (body.action === "standard.move") {
       const kind = standardKind(params.kind ?? params.type ?? "bookmarkItems");
+      if (kind === "tabs") {
+        const state = automationState();
+        const sourceParams = { ...params, kind };
+        delete sourceParams.index;
+        if (params.sourceIndex !== undefined) {
+          sourceParams.index = params.sourceIndex;
+        }
+        const source = standardFind(state, sourceParams);
+        if (!source) throw new Error("standard.move tab not found");
+        const destinationSpaceId = resolveElectronSpaceId(
+          destinationSpaceValue(params),
+        );
+        const result = await moveManagedTab(
+          String(source.id ?? source.targetId),
+          destinationSpaceId,
+          params,
+        );
+        return automationSuccess({
+          ...result,
+          kind,
+          state: automationState(),
+        });
+      }
       if (kind !== "bookmarkItems" && kind !== "bookmarkFolders") {
         throw new Error(`standard.move does not support ${kind}`);
       }
@@ -3266,7 +3328,10 @@ async function routeExternalTargets(
   return opened;
 }
 
-async function closeManagedView(targetId) {
+async function closeManagedView(
+  targetId,
+  { preserveSpace = false, suppressReopen = false } = {},
+) {
   const managed = managedViews.get(targetId);
   if (!managed) return { closed: false };
   const wasPrimary = managed.spaceId === null;
@@ -3278,7 +3343,7 @@ async function closeManagedView(targetId) {
       : null;
   const closedTabGroup =
     closedTabUrl && managed.tabGroup ? { ...managed.tabGroup } : null;
-  if (closedTabUrl) {
+  if (closedTabUrl && !suppressReopen) {
     closedPrimaryTabs.push({ url: closedTabUrl, tabGroup: closedTabGroup });
     while (closedPrimaryTabs.length > 20) closedPrimaryTabs.shift();
   }
@@ -3294,6 +3359,7 @@ async function closeManagedView(targetId) {
     const state = readTaskSpaceState();
     if (
       state.spaces.some((space) => space.id === closedSpaceId) &&
+      !preserveSpace &&
       ![...managedViews.values()].some(
         (candidate) => candidate.spaceId === closedSpaceId,
       )
@@ -3316,6 +3382,118 @@ async function closeManagedView(targetId) {
   }
   publishBrowserState();
   return { closed: true };
+}
+
+function destinationSpaceValue(params = {}) {
+  if (params.destinationSpaceId !== undefined) return params.destinationSpaceId;
+  if (params.spaceId !== undefined) return params.spaceId;
+  if (params.destinationSpace !== undefined) return params.destinationSpace;
+  if (params.space !== undefined) return params.space;
+  return undefined;
+}
+
+function resolveElectronSpaceId(value) {
+  if (value === null) return null;
+  if (value === undefined) {
+    throw new Error("standard.move tab requires a destination Space");
+  }
+  const raw =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? value.id ?? value.taskId ?? value.name
+      : value;
+  const text = String(raw ?? "").trim();
+  if (["", "primary", "window", "application"].includes(text.toLowerCase())) {
+    return null;
+  }
+  const state = readTaskSpaceState();
+  const numeric = Number(text);
+  const space = state.spaces.find(
+    (candidate) =>
+      (Number.isInteger(numeric) && Number(candidate.id) === numeric) ||
+      String(candidate.taskId || "") === text ||
+      String(candidate.name || "") === text,
+  );
+  if (!space) throw new Error(`task Space not found: ${text}`);
+  return Number(space.id);
+}
+
+function reorderManagedView(targetId, requestedIndex) {
+  const target = managedViews.get(targetId);
+  if (!target) throw new Error(`Electron target not found: ${targetId}`);
+  const index = Number(requestedIndex);
+  if (!Number.isInteger(index) || index < 1) {
+    throw new Error("tab index must be a positive integer");
+  }
+  const entries = [...managedViews.entries()];
+  const scoped = entries.filter(([, managed]) => managed.spaceId === target.spaceId);
+  const withoutTarget = scoped.filter(([candidateId]) => candidateId !== targetId);
+  const insertionIndex = Math.min(index - 1, withoutTarget.length);
+  const ordered = [
+    ...withoutTarget.slice(0, insertionIndex),
+    [targetId, target],
+    ...withoutTarget.slice(insertionIndex),
+  ];
+  let scopedIndex = 0;
+  const nextEntries = entries.map((entry) => {
+    if (entry[1].spaceId !== target.spaceId) return entry;
+    return ordered[scopedIndex++];
+  });
+  managedViews.clear();
+  for (const [candidateId, managed] of nextEntries) {
+    managedViews.set(candidateId, managed);
+  }
+}
+
+async function moveManagedTab(targetId, destinationSpaceId, params = {}) {
+  const source = managedViews.get(targetId);
+  if (!source) throw new Error(`Electron target not found: ${targetId}`);
+  if (source.spaceId === destinationSpaceId) {
+    if (params.index !== undefined) reorderManagedView(targetId, params.index);
+    publishBrowserState();
+    return {
+      moved: true,
+      changed: params.index !== undefined,
+      fromSpaceId: source.spaceId,
+      spaceId: destinationSpaceId,
+      tab: automationTab(targetId, managedViews.get(targetId)),
+    };
+  }
+  if (source.private && destinationSpaceId !== null) {
+    throw new Error("private tabs cannot move into an Agent Space");
+  }
+  const url = sessionTabUrl(source.view.webContents.getURL()) || "about:blank";
+  const created =
+    destinationSpaceId === null
+      ? await createPrimaryBrowserView({
+          url,
+          tabGroup: source.tabGroup,
+          privateMode: source.private,
+        })
+      : await createManagedView({
+          spaceId: destinationSpaceId,
+          spaceName:
+            readTaskSpaceState().spaces.find(
+              (space) => Number(space.id) === destinationSpaceId,
+            )?.name || null,
+          url,
+        });
+  if (source.spaceId === null && destinationSpaceId !== null && primaryManagedViews().length === 1) {
+    await createPrimaryBrowserView({ url: "about:blank" });
+  }
+  await closeManagedView(targetId, {
+    preserveSpace: true,
+    suppressReopen: true,
+  });
+  const managed = managedViews.get(created.targetId);
+  if (params.index !== undefined) reorderManagedView(created.targetId, params.index);
+  if (managed && params.activate !== false) setActiveBrowserView(managed.view);
+  else publishBrowserState();
+  return {
+    moved: true,
+    fromSpaceId: source.spaceId,
+    spaceId: destinationSpaceId,
+    tab: automationTab(created.targetId, managedViews.get(created.targetId)),
+  };
 }
 
 async function createUserTab({ privateMode = false } = {}) {
@@ -3577,7 +3755,12 @@ async function handleBridgeRequest(pathname, body) {
     setActiveBrowserView(managed.view);
     return { activated: true };
   }
-  if (pathname === "/close-tab") return closeManagedView(body.targetId);
+  if (pathname === "/close-tab") {
+    return closeManagedView(body.targetId, {
+      preserveSpace: Boolean(body.preserveSpace),
+      suppressReopen: Boolean(body.suppressReopen),
+    });
+  }
   if (pathname === "/permissions") return applyPermissionCommand(body);
   if (pathname === "/tabs") {
     return { tabs: managedTabState() };
