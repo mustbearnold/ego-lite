@@ -4740,6 +4740,17 @@ async function runPackagedCli() {
     hostArguments.push(argument);
   }
   const exitCode = await runHostCommand(hostArguments);
+  await savePrimarySession().catch((error) => {
+    console.warn(
+      `[ego-lite] could not flush primary tabs before CLI exit: ${error?.message || String(error)}`,
+    );
+  });
+  await saveSpaceSession().catch((error) => {
+    console.warn(
+      `[ego-lite] could not flush task-space tabs before CLI exit: ${error?.message || String(error)}`,
+    );
+  });
+  saveWindowStateSync();
   app.exit(Number.isInteger(exitCode) ? exitCode : 0);
 }
 

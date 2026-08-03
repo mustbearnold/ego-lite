@@ -316,6 +316,11 @@ try {
   const electronOpened = await runElectron(tell(`open "${oneUrl}"`));
   assert.equal(electronOpened.ok, true);
   assert.equal(electronOpened.result.tab.url, oneUrl);
+  const electronRestoredUrls = await runElectron(
+    tell("get URL of every tab of window 1"),
+  );
+  assert.ok(Array.isArray(electronRestoredUrls.result.value));
+  assert.ok(electronRestoredUrls.result.value.includes(oneUrl));
   const electronMulti = await runElectron(
     tell(`open "${oneUrl}"\nget URL of active tab`, "Chromium"),
   );
