@@ -57,6 +57,8 @@
     "test:automation": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/automation.mjs",
     "test:standalone-automation": "node test/standalone-automation.mjs",
     "test:apple-script": "ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/apple-script.mjs",
+    "test:skill-contract": "node test/skill-contract.mjs",
+    "test:skill-contract:packaged": "EGO_LITE_CHECK_PACKAGED_SKILL=1 node test/skill-contract.mjs",
     "test:snapshot-contract": "node test/snapshot-contract.mjs",
     "test:stale-cdp-probe": "node test/stale-cdp-probe.mjs",
     "test:frame-snapshot": "npm run build:sdk && ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum node test/frame-snapshot.mjs",

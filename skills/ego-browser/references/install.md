@@ -74,7 +74,7 @@ command -v ego-browser
 Once the command exists, verify the runtime with a minimal heredoc:
 
 ```bash
-ego-browser nodejs <<'EOF'
+ego-browser <<'EOF'
 console.log('ego-browser ready')
 EOF
 ```
