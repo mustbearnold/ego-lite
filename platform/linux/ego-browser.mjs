@@ -224,8 +224,10 @@ Automation:
   window.set-name/minimize/restore/maximize/unmaximize, and bookmarks.list
   plus bookmark.folder.add/rename/remove/move/reorder and
   bookmark.add/remove/open/toggle. Standard tab selectors accept id, name/title,
-  URL, or 1-based index; standard.move accepts a named/id-selected destination
-  Space and sourceSpaceId when the standalone source is outside the selected scope.
+  URL, 1-based index, or a nested specifier record; bookmark folders also accept
+  nested paths. standard.count/make/move accept each/new/at/to aliases,
+  standard.move accepts a named/id-selected destination Space and sourceSpaceId
+  when the standalone source is outside the selected scope.
 
 Migration:
   --migrate-profile imports bookmarks, browser settings, extensions, local

@@ -29,15 +29,15 @@ similar-looking toolbar as proof of parity.
 | Window/tab properties exposed to automation | Implemented with standalone limits | Electron now reports the macOS-shaped window name/given name, index, bounds, close/minimize/resize/zoom capability flags, minimized/zoomed/visible state, active tab/index, mode, and the existing tab model. Standalone Chromium reports the same fields where meaningful and `null` for native-window capabilities. AppleScript syntax and specifier semantics remain gaps. |
 | Back, forward, reload, stop, save, print, view source, and execute JavaScript | Implemented with output differences | The authenticated bridge and CLI now cover navigation, editing, JavaScript execution, save, print-to-PDF, and view-source actions. Electron delegates page saves to Chromium; standalone CDP saves serialize HTML or capture MHTML. Native macOS print-dialog behavior and all save-format details are not identical. |
 | Bookmark folders and bookmark items are scriptable | Implemented with command gaps | `bookmarks.list` now preserves nested folder trees, folder ids/titles/indices, item parent folders, item titles/URLs/indices, and the legacy flat list. Folder add/rename/remove, exact-id mutations, move/reorder, and duplicate work in both runtimes; an ego-owned bookmark store survives Chromium profile shutdown. AppleScript syntax and coercion remain platform-specific. |
-| AppleScript application/window/tab/bookmark automation | Implemented as typed Linux equivalent | Linux now exposes application open/print/quit plus typed count/exists/delete/duplicate/make/move actions through the authenticated HTTP bridge and one-shot JSON CLI. Tab selectors accept ids, names/titles, URLs, and 1-based indices; `standard.move` can move tabs between primary and named/id-selected Spaces. AppleScript syntax, full specifier coercion, native macOS print-dialog semantics, and preserving in-memory tab state during a cross-Space move remain platform-specific. |
+| AppleScript application/window/tab/bookmark automation | Implemented as typed Linux equivalent | Linux now exposes application open/print/quit plus typed count/exists/delete/duplicate/make/move actions through the authenticated HTTP bridge and one-shot JSON CLI. Selectors support ids, names/titles, URLs, indices, nested folder paths, and `specifier` records; `standard.make`/`standard.move` accept location aliases and tabs can move between primary and named/id-selected Spaces. AppleScript syntax, native macOS print-dialog semantics, and preserving in-memory tab state during a cross-Space move remain platform-specific. |
 | Migration, extensions, private tabs, downloads, history, reading list, sync, profiles, fullscreen, find, devtools, and updates | Implemented or intentionally Linux-specific | See `platform/electron/README.md` for the detached probe attached to each feature. |
 
 ## Next parity slices
 
 1. Close remaining snapshot wording and interaction differences against a
    captured macOS contract corpus.
-2. Expand AppleScript-like coercion across nested bookmark and Space
-   specifiers, and compare cross-Space move state preservation against macOS.
+2. Compare cross-Space move state preservation against macOS and close the
+   remaining native print and custom-snapshot differences.
 
 The matrix is deliberately maintained alongside implementation commits so a
 passing Linux test cannot be mistaken for complete macOS parity.

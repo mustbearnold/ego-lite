@@ -131,11 +131,13 @@ duplicate/make/move actions), macOS-shaped window properties/naming and window
 state controls, and bookmark list/add/remove/open/toggle plus nested folder
 add/rename/remove/move/reorder actions. `bookmarks.list` also returns `bookmarkItems` and nested
 `bookmarkFolders` while retaining the legacy flat `bookmarks` array.
-Tab selectors accept ids, names/titles, URLs, and 1-based indices for standard
-and direct tab actions. `standard.move` can move an existing tab between the
-primary window and a named or numeric Agent Space; the destination view is
-recreated from its URL to preserve storage isolation, so in-memory page state
-is not promised to survive a cross-Space move.
+Tab selectors accept ids, names/titles, URLs, 1-based indices, and nested
+`specifier` records for standard and direct tab actions. Bookmark selectors
+also accept nested folder paths; `standard.count`/`make`/`move` accept the
+AppleScript-shaped `each`/`new`/`at`/`to` aliases. `standard.move` can move an
+existing tab between the primary window and a named or numeric Agent Space;
+the destination view is recreated from its URL to preserve storage isolation,
+so in-memory page state is not promised to survive a cross-Space move.
 `tab.execute`
 accepts `params.javascript`; `tab.save` and `tab.print` accept an explicit
 absolute or relative `params.path` (or the corresponding environment override

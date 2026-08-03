@@ -250,7 +250,7 @@ try {
     params: {
       kind: "tab",
       id: tabId,
-      spaceId: "Standalone Space",
+      to: { title: "Standalone Space" },
     },
   });
   assert.equal(movedIntoSpace.moved, true);
@@ -262,7 +262,7 @@ try {
       kind: "tab",
       id: movedIntoSpace.tab.targetId,
       sourceSpaceId: "Standalone Space",
-      destinationSpaceId: null,
+      to: "primary",
       index: 1,
     },
   });
@@ -359,6 +359,12 @@ try {
     params: { url: `${fixtureUrl}?standard-open=1` },
   });
   assert.equal(standardOpened.opened, true);
+  const activatedBySpecifier = await automation({
+    version: 1,
+    action: "tab.activate",
+    params: { specifier: { url: `${fixtureUrl}?standard-open=1` } },
+  });
+  assert.equal(activatedBySpecifier.state.activeTabId, standardOpened.tab.targetId);
   const standardDuplicate = await automation({
     version: 1,
     action: "standard.duplicate",
@@ -393,6 +399,33 @@ try {
     action: "standard.make",
     params: { kind: "bookmarkFolder", title: "Standalone standard folder" },
   });
+  const nestedStandardFolder = await automation({
+    version: 1,
+    action: "standard.make",
+    params: {
+      kind: "bookmarkFolder",
+      title: "Standalone nested folder",
+      at: { title: "Standalone standard folder" },
+    },
+  });
+  assert.equal(nestedStandardFolder.folder.parentId, standardFolder.folder.id);
+  const standardFolderByPath = await automation({
+    version: 1,
+    action: "standard.exists",
+    params: {
+      kind: "bookmarkFolder",
+      specifier: {
+        path: "Bookmarks bar / Standalone standard folder / Standalone nested folder",
+      },
+    },
+  });
+  assert.equal(standardFolderByPath.exists, true);
+  const standardFolderCount = await automation({
+    version: 1,
+    action: "standard.count",
+    params: { each: "bookmark folders" },
+  });
+  assert.ok(standardFolderCount.count >= 3);
   const standardItem = await automation({
     version: 1,
     action: "standard.make",
@@ -402,6 +435,41 @@ try {
       name: "Standalone standard item",
     },
   });
+  const nestedStandardItem = await automation({
+    version: 1,
+    action: "standard.make",
+    params: {
+      kind: "bookmarkItem",
+      withProperties: {
+        url: `${fixtureUrl}?nested-standard-item=1`,
+        title: "Standalone nested item",
+      },
+      at: {
+        path: "Bookmarks bar / Standalone standard folder / Standalone nested folder",
+      },
+    },
+  });
+  assert.equal(nestedStandardItem.bookmark.parentId, nestedStandardFolder.folder.id);
+  const movedNestedStandardItem = await automation({
+    version: 1,
+    action: "standard.move",
+    params: {
+      kind: "bookmarkItem",
+      specifier: { title: "Standalone nested item" },
+      to: { title: "Standalone standard folder" },
+      index: 1,
+    },
+  });
+  assert.equal(movedNestedStandardItem.bookmark.parentId, standardFolder.folder.id);
+  const deletedNestedStandardItem = await automation({
+    version: 1,
+    action: "standard.delete",
+    params: {
+      kind: "bookmarkItem",
+      specifier: { title: "Standalone nested item" },
+    },
+  });
+  assert.equal(deletedNestedStandardItem.deleted, true);
   const standardMoved = await automation({
     version: 1,
     action: "standard.move",

@@ -1217,17 +1217,10 @@ function automationBookmarkUrl(value) {
 }
 
 function automationBookmark(params = {}) {
-  const id = params.id === undefined ? null : String(params.id);
-  const url = params.url ? automationBookmarkUrl(params.url) : null;
-  const name = params.name ? String(params.name) : null;
-  const bookmark = bookmarks.find(
-    (candidate) =>
-      (id && candidate.id === id) ||
-      (url && candidate.url === url) ||
-      (name && candidate.name === name),
-  );
+  const state = automationState();
+  const bookmark = standardFind(state, { ...params, kind: "bookmarkItems" });
   if (!bookmark) throw new Error("bookmark not found");
-  return bookmark;
+  return { ...bookmark, name: bookmark.name ?? bookmark.title };
 }
 
 function automationBookmarkState() {
@@ -1266,6 +1259,29 @@ function standardKind(value) {
   throw new Error(`unsupported standard object kind: ${String(value || "")}`);
 }
 
+function standardKindFromParams(params = {}, fallback) {
+  return standardKind(
+    params.kind ??
+      params.type ??
+      params.objectClass ??
+      params.each ??
+      params.new ??
+      fallback,
+  );
+}
+
+function standardSpecifierValue(params = {}) {
+  return params.specifier ?? params.object ?? params.targetObject;
+}
+
+function standardSpecifierFields(params = {}) {
+  const value = standardSpecifierValue(params);
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return params;
+  }
+  return { ...value, ...params };
+}
+
 function standardCandidates(state, kindValue) {
   const kind = standardKind(kindValue);
   const candidates = (() => {
@@ -1292,6 +1308,7 @@ function standardCandidates(state, kindValue) {
 }
 
 function hasStandardSpecifier(params = {}) {
+  const specifier = standardSpecifierValue(params);
   return [
     params.id,
     params.targetId,
@@ -1299,25 +1316,58 @@ function hasStandardSpecifier(params = {}) {
     params.title,
     params.url,
     params.index,
+    specifier,
   ].some((value) => value !== undefined && value !== null && String(value) !== "");
 }
 
 function standardMatches(candidate, params = {}) {
-  const id = params.id ?? params.targetId;
-  const name = params.name ?? params.title;
-  if (id !== undefined && id !== null && String(id) !== "") {
-    const candidateId = candidate.id ?? candidate.targetId;
-    if (String(candidateId ?? "") !== String(id)) return false;
+  const specifier = standardSpecifierValue(params);
+  if (
+    specifier !== undefined &&
+    (specifier === null || typeof specifier !== "object" || Array.isArray(specifier))
+  ) {
+    if (typeof specifier === "number") {
+      if (candidate.index !== Number(specifier)) return false;
+    } else {
+      const text = String(specifier);
+      const candidateIds = [candidate.id, candidate.targetId, candidate.taskId]
+        .filter((value) => value !== undefined && value !== null)
+        .map((value) => String(value));
+      const candidateName = candidate.name ?? candidate.title ?? "";
+      if (
+        !candidateIds.includes(text) &&
+        String(candidateName) !== text &&
+        String(candidate.url || "") !== text &&
+        String(candidate.path || "") !== text
+      ) {
+        return false;
+      }
+    }
   }
-  if (params.url !== undefined && String(candidate.url || "") !== String(params.url)) {
+  const fields = standardSpecifierFields(params);
+  const id = fields.id ?? fields.targetId ?? fields.taskId;
+  const name = fields.name ?? fields.title;
+  if (id !== undefined && id !== null && String(id) !== "") {
+    const candidateIds = [candidate.id, candidate.targetId, candidate.taskId]
+      .filter((value) => value !== undefined && value !== null)
+      .map((value) => String(value));
+    if (!candidateIds.includes(String(id))) return false;
+  }
+  if (fields.url !== undefined && String(candidate.url || "") !== String(fields.url)) {
     return false;
   }
   if (name !== undefined) {
     const candidateName = candidate.name ?? candidate.title ?? "";
     if (String(candidateName) !== String(name)) return false;
   }
-  if (params.index !== undefined) {
-    const index = Number(params.index);
+  if (fields.path !== undefined && candidate.path !== undefined) {
+    const path = Array.isArray(fields.path)
+      ? fields.path.join(" / ")
+      : String(fields.path);
+    if (String(candidate.path || "") !== path) return false;
+  }
+  if (fields.index !== undefined) {
+    const index = Number(fields.index);
     if (!Number.isInteger(index) || candidate.index !== index) return false;
   }
   return true;
@@ -1326,6 +1376,115 @@ function standardMatches(candidate, params = {}) {
 function standardFind(state, params = {}) {
   const candidates = standardCandidates(state, params.kind ?? params.type);
   return candidates.find((candidate) => standardMatches(candidate, params)) || null;
+}
+
+function bookmarkDestinationValue(params = {}) {
+  for (const key of [
+    "parentId",
+    "folderId",
+    "destinationFolderId",
+    "destinationFolder",
+    "parent",
+    "at",
+    "to",
+  ]) {
+    if (params[key] !== undefined) return params[key];
+  }
+  return "1";
+}
+
+function bookmarkMoveDestinationValue(params = {}) {
+  for (const key of [
+    "parentId",
+    "destinationFolderId",
+    "destinationFolder",
+    "parent",
+    "to",
+  ]) {
+    if (params[key] !== undefined) return params[key];
+  }
+  return "1";
+}
+
+function bookmarkFolderSelectorParams(params = {}) {
+  const specifier =
+    params.folderSpecifier ?? params.folder ?? params.specifier ?? params.object;
+  if (specifier !== undefined) return { specifier };
+  const id = params.id ?? params.folderId;
+  return id === undefined ? {} : { id };
+}
+
+function resolveElectronBookmarkFolderId(state, value = "1") {
+  const raw =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? value.specifier ?? value.object ?? value
+      : value;
+  if (raw === null || raw === undefined || raw === "") return "1";
+  const folders = flattenAutomationFolders(state.bookmarkFolders);
+  const fields =
+    raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const text =
+    raw && typeof raw !== "object" ? String(raw).trim() : "";
+  const requestedId = fields.id ?? fields.folderId ?? fields.targetId;
+  if (requestedId !== undefined && requestedId !== null) {
+    if (String(requestedId) === "1") return "1";
+    const match = folders.find((folder) => String(folder.id) === String(requestedId));
+    if (match) return String(match.id);
+  }
+  const requestedPath = fields.path ?? fields.folderPath;
+  if (requestedPath !== undefined) {
+    const path = Array.isArray(requestedPath)
+      ? requestedPath.join(" / ")
+      : String(requestedPath).trim();
+    const match = folders.find((folder) => String(folder.path || "") === path);
+    if (match) return String(match.id);
+  }
+  const requestedTitle = fields.title ?? fields.name;
+  const requestedIndex = fields.index;
+  const parentValue = fields.parentId ?? fields.parent;
+  const parentId =
+    parentValue === undefined
+      ? null
+      : resolveElectronBookmarkFolderId(state, parentValue);
+  if (requestedTitle !== undefined || requestedIndex !== undefined) {
+    const match = folders.find(
+      (folder) =>
+        (parentId === null || String(folder.parentId) === String(parentId)) &&
+        (requestedTitle === undefined ||
+          String(folder.title || "") === String(requestedTitle)) &&
+        (requestedIndex === undefined || Number(folder.index) === Number(requestedIndex)),
+    );
+    if (match) return String(match.id);
+  }
+  if (text) {
+    if (text === "1" || text.toLowerCase() === "bookmarks bar") return "1";
+    const byId = folders.find((folder) => String(folder.id) === text);
+    if (byId) return String(byId.id);
+    const byPath = folders.find((folder) => String(folder.path || "") === text);
+    if (byPath) return String(byPath.id);
+    const byTitle = folders.find((folder) => String(folder.title || "") === text);
+    if (byTitle) return String(byTitle.id);
+    const byIndex = folders.find((folder) => Number(folder.index) === Number(text));
+    if (byIndex) return String(byIndex.id);
+  }
+  throw new Error(`bookmark folder not found: ${text || JSON.stringify(raw)}`);
+}
+
+function standardBookmarkSource(state, params, kind) {
+  const sourceParams = { ...params };
+  delete sourceParams.index;
+  if (params.sourceIndex !== undefined) sourceParams.index = params.sourceIndex;
+  const requestedKind = sourceParams.kind ?? sourceParams.type;
+  if (requestedKind !== undefined) {
+    return standardFind(state, { ...sourceParams, kind: requestedKind });
+  }
+  return (
+    standardFind(state, { ...sourceParams, kind }) ||
+    standardFind(state, {
+      ...sourceParams,
+      kind: kind === "bookmarkItems" ? "bookmarkFolders" : "bookmarkItems",
+    })
+  );
 }
 
 function automationOutputPath(value, environmentVariable, message) {
@@ -1485,18 +1644,18 @@ async function handleAutomationRequest(body) {
     }
     if (body.action === "standard.count") {
       const state = automationState();
-      const kind = standardKind(params.kind ?? params.type);
+      const kind = standardKindFromParams(params);
       return automationSuccess({ kind, count: standardCandidates(state, kind).length });
     }
     if (body.action === "standard.exists") {
       const state = automationState();
-      const kind = standardKind(params.kind ?? params.type);
+      const kind = standardKindFromParams(params);
       const object = standardFind(state, { ...params, kind });
       return automationSuccess({ kind, exists: Boolean(object), object });
     }
     if (body.action === "standard.delete") {
       const state = automationState();
-      const kind = standardKind(params.kind ?? params.type);
+      const kind = standardKindFromParams(params);
       if (kind === "tabs") {
         const target = automationTarget(params);
         const result = await closeManagedView(target.targetId);
@@ -1548,7 +1707,7 @@ async function handleAutomationRequest(body) {
     }
     if (body.action === "standard.duplicate") {
       const state = automationState();
-      const kind = standardKind(params.kind ?? params.type);
+      const kind = standardKindFromParams(params);
       if (kind === "tabs") {
         const target = automationTarget(params);
         const url = target.managed.view.webContents.getURL() || "about:blank";
@@ -1598,7 +1757,8 @@ async function handleAutomationRequest(body) {
       throw new Error(`standard.duplicate does not support ${kind}`);
     }
     if (body.action === "standard.make") {
-      const kind = standardKind(params.kind ?? params.type);
+      const state = automationState();
+      const kind = standardKindFromParams(params);
       if (kind === "tabs") {
         const requestedUrl = params.url ?? params.target ?? "about:blank";
         const spaceId = automationSpaceId(params.spaceId);
@@ -1632,9 +1792,13 @@ async function handleAutomationRequest(body) {
         });
       }
       if (kind === "bookmarkFolders") {
+        const properties = params.withProperties ?? params.properties ?? {};
         const result = addBookmarkFolderToDocument(readBookmarkStoreDocument(), {
-          title: params.title ?? params.name,
-          parentId: params.parentId ?? params.folderId ?? "1",
+          title: params.title ?? params.name ?? properties.title ?? properties.name,
+          parentId: resolveElectronBookmarkFolderId(
+            state,
+            bookmarkDestinationValue(params),
+          ),
         });
         if (!result.added) throw new Error("standard.make bookmark folder failed");
         writeBookmarksDocument(result.document);
@@ -1649,12 +1813,16 @@ async function handleAutomationRequest(body) {
         });
       }
       if (kind === "bookmarkItems") {
-        const url = automationBookmarkUrl(params.url);
+        const properties = params.withProperties ?? params.properties ?? {};
+        const url = automationBookmarkUrl(params.url ?? properties.url ?? properties.URL);
         if (!url) throw new Error("standard.make bookmark item requires params.url");
         const result = addBookmarkToDocument(readBookmarkStoreDocument(), {
           url,
-          name: params.name ?? params.title ?? url,
-          parentId: params.parentId ?? params.folderId ?? "1",
+          name: params.name ?? params.title ?? properties.name ?? properties.title ?? url,
+          parentId: resolveElectronBookmarkFolderId(
+            state,
+            bookmarkDestinationValue(params),
+          ),
         });
         if (!result.added) throw new Error("standard.make bookmark item failed");
         writeBookmarksDocument(result.document);
@@ -1672,9 +1840,9 @@ async function handleAutomationRequest(body) {
       throw new Error(`standard.make does not support ${kind}`);
     }
     if (body.action === "standard.move") {
-      const kind = standardKind(params.kind ?? params.type ?? "bookmarkItems");
+      const state = automationState();
+      const kind = standardKindFromParams(params, "bookmarkItems");
       if (kind === "tabs") {
-        const state = automationState();
         const sourceParams = { ...params, kind };
         delete sourceParams.index;
         if (params.sourceIndex !== undefined) {
@@ -1699,11 +1867,14 @@ async function handleAutomationRequest(body) {
       if (kind !== "bookmarkItems" && kind !== "bookmarkFolders") {
         throw new Error(`standard.move does not support ${kind}`);
       }
-      const id = params.id ?? params.targetId;
-      if (id === undefined) throw new Error("standard.move requires params.id");
+      const source = standardBookmarkSource(state, params, kind);
+      if (!source) throw new Error("standard.move bookmark object not found");
       const result = moveBookmarkNodeInDocument(readBookmarkStoreDocument(), {
-        id,
-        parentId: params.parentId ?? params.destinationFolderId ?? "1",
+        id: source.id,
+        parentId: resolveElectronBookmarkFolderId(
+          state,
+          bookmarkMoveDestinationValue(params),
+        ),
         index: params.index,
       });
       if (!result.moved) throw new Error("standard.move bookmark object failed");
@@ -1909,96 +2080,120 @@ async function handleAutomationRequest(body) {
     if (body.action === "bookmark.folder.add") {
       const title = String(params.title ?? params.name ?? "").trim();
       if (!title) throw new Error("bookmark.folder.add requires params.title");
+      const state = automationState();
       const document = readBookmarkStoreDocument();
       const result = addBookmarkFolderToDocument(document, {
         title,
-        parentId: params.parentId ?? params.folderId ?? "1",
+        parentId: resolveElectronBookmarkFolderId(
+          state,
+          bookmarkDestinationValue(params),
+        ),
       });
       if (!result.added) throw new Error("bookmark folder parent not found");
       writeBookmarksDocument(result.document);
       bookmarks = readBookmarks(BOOKMARKS_STATE_PATH);
       publishBrowserState();
-      const state = automationState();
+      const nextState = automationState();
       return automationSuccess({
         added: true,
         folder: result.folder,
-        bookmarkFolders: state.bookmarkFolders,
+        bookmarkFolders: nextState.bookmarkFolders,
       });
     }
     if (body.action === "bookmark.folder.rename") {
-      const id = params.id ?? params.folderId;
       const title = String(params.title ?? params.name ?? "").trim();
-      if (id === undefined || !title) {
+      if (!title) {
         throw new Error(
           "bookmark.folder.rename requires params.id and params.title",
         );
       }
+      const state = automationState();
+      const folder = standardFind(state, {
+        ...bookmarkFolderSelectorParams(params),
+        kind: "bookmarkFolders",
+      });
+      if (!folder) throw new Error("bookmark folder not found");
       const document = readBookmarkStoreDocument();
-      const result = renameBookmarkFolderInDocument(document, { id, title });
+      const result = renameBookmarkFolderInDocument(document, {
+        id: folder.id,
+        title,
+      });
       if (!result.renamed) throw new Error("bookmark folder not found");
       writeBookmarksDocument(result.document);
       bookmarks = readBookmarks(BOOKMARKS_STATE_PATH);
       publishBrowserState();
-      const state = automationState();
+      const nextState = automationState();
       return automationSuccess({
         renamed: true,
         folder: result.folder,
-        bookmarkFolders: state.bookmarkFolders,
+        bookmarkFolders: nextState.bookmarkFolders,
       });
     }
     if (body.action === "bookmark.folder.remove") {
-      const id = params.id ?? params.folderId;
-      if (id === undefined) {
+      const state = automationState();
+      const folder = standardFind(state, {
+        ...bookmarkFolderSelectorParams(params),
+        kind: "bookmarkFolders",
+      });
+      if (!folder) {
         throw new Error("bookmark.folder.remove requires params.id");
       }
       const document = readBookmarkStoreDocument();
-      const result = removeBookmarkFolderFromDocument(document, id);
+      const result = removeBookmarkFolderFromDocument(document, folder.id);
       if (!result.removed) throw new Error("bookmark folder not found");
       writeBookmarksDocument(result.document);
       bookmarks = readBookmarks(BOOKMARKS_STATE_PATH);
       publishBrowserState();
-      const state = automationState();
+      const nextState = automationState();
       return automationSuccess({
         removed: result.removed,
-        bookmarks: state.bookmarks,
-        bookmarkFolders: state.bookmarkFolders,
+        bookmarks: nextState.bookmarks,
+        bookmarkFolders: nextState.bookmarkFolders,
       });
     }
     if (body.action === "bookmark.move" || body.action === "bookmark.reorder") {
-      const id = params.id ?? params.bookmarkId ?? params.folderId;
-      if (id === undefined) {
+      const state = automationState();
+      const source = standardBookmarkSource(state, params, "bookmarkItems");
+      if (!source) {
         throw new Error(`${body.action} requires params.id`);
       }
       const document = readBookmarkStoreDocument();
       const result = moveBookmarkNodeInDocument(document, {
-        id,
-        parentId: params.parentId ?? params.destinationFolderId ?? "1",
+        id: source.id,
+        parentId: resolveElectronBookmarkFolderId(
+          state,
+          bookmarkMoveDestinationValue(params),
+        ),
         index: params.index,
       });
       if (!result.moved) throw new Error("bookmark node cannot be moved");
       writeBookmarksDocument(result.document);
       bookmarks = readBookmarks(BOOKMARKS_STATE_PATH);
       publishBrowserState();
-      const state = automationState();
+      const nextState = automationState();
       return automationSuccess({
         moved: true,
         parentId: result.parentId,
         index: result.index,
         bookmark: result.bookmark,
         folder: result.folder,
-        bookmarkItems: state.bookmarkItems,
-        bookmarkFolders: state.bookmarkFolders,
+        bookmarkItems: nextState.bookmarkItems,
+        bookmarkFolders: nextState.bookmarkFolders,
       });
     }
     if (body.action === "bookmark.add") {
       const url = automationBookmarkUrl(params.url);
       if (!url) throw new Error("bookmark.add requires a file, HTTP, or HTTPS URL");
       const name = String(params.name || url).trim().slice(0, 160);
+      const state = automationState();
       const document = readBookmarkStoreDocument();
       const result = addBookmarkToDocument(document, {
         url,
         name,
-        parentId: params.parentId ?? params.folderId ?? "1",
+        parentId: resolveElectronBookmarkFolderId(
+          state,
+          bookmarkDestinationValue(params),
+        ),
       });
       if (result.added) writeBookmarksDocument(result.document);
       bookmarks = readBookmarks(BOOKMARKS_STATE_PATH);
@@ -2012,12 +2207,11 @@ async function handleAutomationRequest(body) {
       });
     }
     if (body.action === "bookmark.remove") {
-      const bookmark = params.id ? automationBookmark(params) : null;
+      const bookmark = automationBookmark(params);
       const url = automationBookmarkUrl(params.url || bookmark?.url);
-      if (!url) throw new Error("bookmark.remove requires params.id or params.url");
       const document = readBookmarkStoreDocument();
       const result = removeBookmarkItemFromDocument(document, {
-        id: params.id,
+        id: bookmark.id,
         url,
       });
       if (result.removed) writeBookmarksDocument(result.document);
@@ -3389,6 +3583,8 @@ function destinationSpaceValue(params = {}) {
   if (params.spaceId !== undefined) return params.spaceId;
   if (params.destinationSpace !== undefined) return params.destinationSpace;
   if (params.space !== undefined) return params.space;
+  if (params.destination !== undefined) return params.destination;
+  if (params.to !== undefined) return params.to;
   return undefined;
 }
 
@@ -3397,10 +3593,14 @@ function resolveElectronSpaceId(value) {
   if (value === undefined) {
     throw new Error("standard.move tab requires a destination Space");
   }
-  const raw =
+  const valueObject =
     value && typeof value === "object" && !Array.isArray(value)
-      ? value.id ?? value.taskId ?? value.name
+      ? value.specifier ?? value.object ?? value
       : value;
+  const raw =
+    valueObject && typeof valueObject === "object" && !Array.isArray(valueObject)
+      ? valueObject.id ?? valueObject.taskId ?? valueObject.name ?? valueObject.title
+      : valueObject;
   const text = String(raw ?? "").trim();
   if (["", "primary", "window", "application"].includes(text.toLowerCase())) {
     return null;

@@ -57,12 +57,14 @@ move/reorder.
 Window state includes macOS-shaped name, bounds, capability, active-tab, and
 mode fields; bookmark mutations are mirrored to an ego-owned profile store so
 they survive Chromium shutdown; native window mutations remain Electron-only.
-Standard tab selectors accept ids, names/titles, URLs, and 1-based indices.
-`standard.move` moves a tab between the primary scope and a named or numeric
-Agent Space; standalone requests can add `sourceSpaceId` when the source is
-outside the selected scope. Cross-Space moves recreate the tab from its URL to
-retain the storage isolation boundary, so transient page state is not promised
-to survive the move.
+Standard tab selectors accept ids, names/titles, URLs, 1-based indices, and
+nested `specifier` records; bookmark selectors additionally accept nested
+folder paths. The standard suite accepts the AppleScript-shaped `each`, `new`,
+`at`, and `to` location aliases. `standard.move` moves a tab between the
+primary scope and a named or numeric Agent Space; standalone requests can add
+`sourceSpaceId` when the source is outside the selected scope. Cross-Space
+moves recreate the tab from its URL to retain the storage isolation boundary,
+so transient page state is not promised to survive the move.
 `tab.execute` takes
 `params.javascript`; `tab.save` and `tab.print` require `params.path` when
 running standalone. When attached to Electron, the CLI uses the authenticated

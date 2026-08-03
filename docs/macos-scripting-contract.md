@@ -71,14 +71,19 @@ The generic AppleScript commands are available through typed JSON actions:
 `standard.duplicate`, `standard.make`, and `standard.move`. They accept a
 `kind` such as `window`, `tab`, `space`, `bookmarkFolder`, or `bookmarkItem`.
 Tab and standard-object selectors accept an `id`/`targetId`, `name`/`title`,
-`url`, or a 1-based `index`; delete, duplicate, activate, and other tab actions
-resolve those selectors instead of silently falling back to the active tab.
-`standard.move` accepts `spaceId`, `destinationSpaceId`, or a Space name/task id
-for tab moves, and `sourceSpaceId` when the source is outside the currently
-selected standalone scope. Cross-Space moves recreate the destination view from
-the tab URL so the isolation boundary remains intact; transient page state and
-history are not promised to survive. AppleScript syntax and its full implicit
-specifier coercion are not reproduced.
+`url`, or a 1-based `index`; the same fields can be nested in a `specifier`
+record (or passed as a string/number). Folder selectors additionally accept an
+exact nested `path`, and folder destinations accept an id, title, path, or
+record. Delete, duplicate, activate, and other tab actions resolve those
+selectors instead of silently falling back to the active tab.
+`standard.count` accepts `each`, `standard.make` accepts `new`, `withProperties`,
+and `at`, and `standard.move` accepts `to` as aliases for the typed fields.
+Tab moves accept `spaceId`, `destinationSpaceId`, or a Space name/task id for
+the destination, plus `sourceSpaceId` when the source is outside the currently
+selected standalone scope. Cross-Space moves recreate the destination view
+from the tab URL so the isolation boundary remains intact; transient page state
+and history are not promised to survive. AppleScript syntax and its full
+implicit specifier coercion are not reproduced.
 
 Electron delegates save to Chromium's page archive and print to Chromium's PDF
 output. The standalone host supports HTML/DOM serialization and MHTML capture
