@@ -1445,10 +1445,11 @@ function isActionableAxNode(node, role) {
   );
 }
 
-function stableLocatorForNode(role, name) {
+function stableLocatorForNode(role, name, url = "") {
   if (!role || role === "none" || role === "generic" || role === "text") {
     return null;
   }
+  if (role === "link" && url) return `loc=href:${url}`;
   return `loc=role:${role}${name ? `[name=${JSON.stringify(name)}]` : ""}`;
 }
 
@@ -1593,6 +1594,8 @@ function renderAccessibilityTree(nodes, options) {
     const name = String(axValue(node.name) || "")
       .replace(/\s+/g, " ")
       .trim();
+    const url =
+      role === "link" ? String(axPropertyValue(node, "url") || "").trim() : "";
     const backendNodeId = node.backendDOMNodeId;
     const hasUsefulContent =
       !node.ignored &&
@@ -1625,8 +1628,9 @@ function renderAccessibilityTree(nodes, options) {
         options.includeStableLocator !== false &&
         actionable
       ) {
-        const stableLocator = stableLocatorForNode(role, name);
+        const stableLocator = stableLocatorForNode(role, name, url);
         if (stableLocator) annotations.push(stableLocator);
+        if (url) annotations.push(`url=${JSON.stringify(url)}`);
       }
       if (annotations.length > 0) {
         line += ` [${annotations.join(", ")}]`;

@@ -40,6 +40,34 @@ export async function queryRoleLocatorBackendNodeIds(
   return backendNodeId === undefined ? [] : [backendNodeId];
 }
 
+/**
+ * Return the ordered AX backend-node match set for a link href locator.
+ * Href locators use the same frame-aware AX path as role locators so links in
+ * nested and cross-origin frames remain actionable after a snapshot.
+ */
+export async function queryHrefLocatorBackendNodeIds(
+  cdp,
+  sessionId,
+  selectorOrRef,
+): Promise<number[] | null> {
+  const locator = parseLocator(selectorOrRef);
+  if (locator?.kind !== "href") {
+    return null;
+  }
+  const backendNodeIds = await findBackendNodeIdsByHref(
+    cdp,
+    sessionId,
+    locator.href,
+  );
+  const nth = locator.nth as number | "last" | undefined;
+  if (nth === undefined) {
+    return backendNodeIds;
+  }
+  const nthIndex = nth === "last" ? backendNodeIds.length - 1 : nth;
+  const backendNodeId = backendNodeIds[nthIndex];
+  return backendNodeId === undefined ? [] : [backendNodeId];
+}
+
 function exceptionText(result: any) {
   const d = result?.exceptionDetails;
   return d?.exception?.description || d?.text || "evaluation error";
@@ -274,6 +302,24 @@ async function resolveLocatorCenter(cdp, sessionId, locator) {
     );
     return { ...boxModelCenter(result.model), sessionId };
   }
+  if (locator.kind === "href") {
+    const backendNodeId =
+      locator.nth === undefined
+        ? await findUniqueBackendNodeIdByHref(cdp, sessionId, locator.href)
+        : await findBackendNodeIdByHref(
+            cdp,
+            sessionId,
+            locator.href,
+            locator.nth,
+          );
+    const result = await send(
+      cdp,
+      "DOM.getBoxModel",
+      { backendNodeId },
+      sessionId,
+    );
+    return { ...boxModelCenter(result.model), sessionId };
+  }
   const result = await send(
     cdp,
     "Runtime.evaluate",
@@ -324,6 +370,34 @@ async function resolveLocatorObjectId(cdp, sessionId, locator) {
       cdp,
       "DOM.resolveNode",
       { backendNodeId, objectGroup: "ego-browser" },
+      sessionId,
+    );
+    const objectId = result.object?.objectId;
+    if (!objectId) {
+      throw new ElementResolutionError(
+        `No objectId for locator ${locator.raw}`,
+        "permanent",
+      );
+    }
+    return { objectId, sessionId };
+  }
+  if (locator.kind === "href") {
+    const backendNodeId =
+      locator.nth === undefined
+        ? await findUniqueBackendNodeIdByHref(cdp, sessionId, locator.href)
+        : await findBackendNodeIdByHref(
+            cdp,
+            sessionId,
+            locator.href,
+            locator.nth,
+          );
+    const result = await send(
+      cdp,
+      "DOM.resolveNode",
+      {
+        backendNodeId,
+        objectGroup: "ego-browser",
+      },
       sessionId,
     );
     const objectId = result.object?.objectId;
@@ -461,6 +535,83 @@ async function findBackendNodeIdsByRoleName(
   );
 }
 
+async function findBackendNodeIdByHref(
+  cdp,
+  sessionId,
+  href,
+  nth = undefined,
+  iframeSessions = new Map(),
+) {
+  const matches = await findBackendNodeIdsByHref(
+    cdp,
+    sessionId,
+    href,
+    undefined,
+    iframeSessions,
+  );
+  const nthIndex = nth === "last" ? matches.length - 1 : (nth ?? 0);
+  const match = matches[nthIndex];
+  if (match !== undefined) {
+    return match;
+  }
+  throw new ElementResolutionError(
+    `Could not locate element with href=${href}`,
+    "transient",
+  );
+}
+
+async function findUniqueBackendNodeIdByHref(cdp, sessionId, href) {
+  const matches = await findBackendNodeIdsByHref(cdp, sessionId, href);
+  if (matches.length === 0) {
+    throw new ElementResolutionError(
+      `Locator href:${href} matched 0 elements`,
+      "transient",
+    );
+  }
+  if (matches.length > 1) {
+    throw new ElementResolutionError(
+      `Locator href:${href} matched ${matches.length} elements`,
+      "permanent",
+    );
+  }
+  return matches[0];
+}
+
+async function findBackendNodeIdsByHref(
+  cdp,
+  sessionId,
+  href,
+  frameId = undefined,
+  iframeSessions = new Map(),
+) {
+  if (frameId === undefined) {
+    const frameIds = await roleLocatorFrameIds(cdp, sessionId);
+    if (frameIds) {
+      const matches = [];
+      for (const candidateFrameId of frameIds) {
+        matches.push(
+          ...(await readBackendNodeIdsByHref(
+            cdp,
+            sessionId,
+            href,
+            candidateFrameId,
+            iframeSessions,
+          )),
+        );
+      }
+      return matches;
+    }
+  }
+
+  return readBackendNodeIdsByHref(
+    cdp,
+    sessionId,
+    href,
+    frameId,
+    iframeSessions,
+  );
+}
+
 async function roleLocatorFrameIds(cdp, sessionId): Promise<string[] | null> {
   let result;
   try {
@@ -521,6 +672,45 @@ async function readBackendNodeIdsByRoleName(
     if (backendNodeId === undefined || backendNodeId === null) {
       throw new ElementResolutionError(
         `AX node has no backendDOMNodeId for role=${role} name=${name}`,
+        "permanent",
+      );
+    }
+    matches.push(backendNodeId);
+  }
+  return matches;
+}
+
+async function readBackendNodeIdsByHref(
+  cdp,
+  sessionId,
+  href,
+  frameId = undefined,
+  iframeSessions = new Map(),
+) {
+  const [params, effectiveSessionId] = resolveAxSession(
+    frameId,
+    sessionId,
+    iframeSessions,
+  );
+  const result = await send(
+    cdp,
+    "Accessibility.getFullAXTree",
+    params,
+    effectiveSessionId,
+  );
+  const matches = [];
+  for (const node of result.nodes || []) {
+    if (node.ignored || extractAxString(node.role) !== "link") {
+      continue;
+    }
+    const actualHref = extractAxPropertyString(node, "url");
+    if (!hrefMatches(actualHref, href)) {
+      continue;
+    }
+    const backendNodeId = node.backendDOMNodeId;
+    if (backendNodeId === undefined || backendNodeId === null) {
+      throw new ElementResolutionError(
+        `AX node has no backendDOMNodeId for href=${href}`,
         "permanent",
       );
     }
@@ -939,6 +1129,24 @@ function extractAxString(value) {
     return String(raw);
   }
   return "";
+}
+
+function extractAxPropertyString(node, propertyName) {
+  const property = (node?.properties || []).find(
+    (candidate) => candidate?.name === propertyName,
+  );
+  return extractAxString(property?.value);
+}
+
+function hrefMatches(actualHref, expectedHref) {
+  if (!actualHref) return false;
+  try {
+    const url = new URL(actualHref);
+    const path = url.pathname + url.search + url.hash;
+    return path === expectedHref || url.href === expectedHref;
+  } catch {
+    return actualHref === expectedHref;
+  }
 }
 
 function axNameMatches(actual, expected) {

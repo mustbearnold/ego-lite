@@ -88,7 +88,7 @@ try {
     response.end(
       _request.url === "/clicked"
         ? "<!doctype html><html><body><h2>Clicked child</h2></body></html>"
-        : "<!doctype html><html><body><h2>Nested child</h2><button id=\"child-action\" onclick=\"location.href='/clicked'\">Child action</button></body></html>",
+        : "<!doctype html><html><body><h2>Nested child</h2><a href=\"/clicked\">Child link</a><button id=\"child-action\" onclick=\"location.href='/clicked'\">Child action</button></body></html>",
     );
   });
   const childPort = await new Promise((resolvePromise, rejectPromise) => {
@@ -162,6 +162,14 @@ await page.goto('http://127.0.0.1:${parentPort}/parent', { waitUntil: 'load' })
 const before = await page.snapshotRaw()
 const child = before.refs.find((ref) => ref.name === 'Child action')
 if (!child) throw new Error('nested child ref missing')
+if (!before.content.includes('loc=href:http://127.0.0.1:${childPort}/clicked')) throw new Error('nested href locator missing')
+if (!before.content.includes('url="http://127.0.0.1:${childPort}/clicked"')) throw new Error('nested href URL missing')
+await page.locator('loc=href:/clicked').click()
+await page.waitForTimeout(200)
+const hrefAfter = await page.snapshotRaw()
+if (!hrefAfter.content.includes('Clicked child')) throw new Error('nested href click failed')
+await page.goto('http://127.0.0.1:${parentPort}/parent', { waitUntil: 'load' })
+await page.waitForTimeout(200)
 await page.locator('loc=role:button[name="Child action"]').click()
 await page.waitForTimeout(200)
 const roleAfter = await page.snapshotRaw()
@@ -173,7 +181,7 @@ if (!freshChild) throw new Error('nested child ref missing after role navigation
 await page.locator('@' + freshChild.backendNodeId).click()
 await page.waitForTimeout(200)
 const refAfter = await page.snapshotRaw()
-console.log(JSON.stringify({ before, roleAfter, refBefore, refAfter }))
+console.log(JSON.stringify({ before, hrefAfter, roleAfter, refBefore, refAfter }))
 `);
   const exitCode = await new Promise((resolvePromise) =>
     host.once("close", resolvePromise),
@@ -189,14 +197,19 @@ console.log(JSON.stringify({ before, roleAfter, refBefore, refAfter }))
     .filter(Boolean)
     .map((line) => JSON.parse(line));
   assert.equal(reports.length, 1, hostStdout);
-  const { before, roleAfter, refBefore, refAfter } = reports[0];
+  const { before, hrefAfter, roleAfter, refBefore, refAfter } = reports[0];
   const nestedRef = before.refs.find((ref) => ref.name === "Child action");
   assert.ok(nestedRef?.frameId, "nested ref should retain its frame id");
   assert.match(before.content, /Iframe "child"/);
   assert.match(
     before.content,
+    /link "Child link" \[ref=.*loc=href:http:\/\/127\.0\.0\.1:\d+\/clicked, url="http:\/\/127\.0\.0\.1:\d+\/clicked"\]/,
+  );
+  assert.match(
+    before.content,
     /button "Child action" \[ref=.*loc=role:button\[name="Child action"\]\]/,
   );
+  assert.match(hrefAfter.content, /Clicked child/);
   assert.match(roleAfter.content, /Clicked child/);
   assert.doesNotMatch(roleAfter.content, /Child action/);
   assert.match(refBefore.content, /button "Child action" \[ref=/);

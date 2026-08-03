@@ -1,6 +1,7 @@
 import { cdp, runtimeValue } from "../cdp-eval.js";
 import {
   ElementResolutionError,
+  queryHrefLocatorBackendNodeIds,
   queryRoleLocatorBackendNodeIds,
 } from "../element-resolver.js";
 import { queryAllExpression as buildQueryAllExpression } from "../locator-query.js";
@@ -223,8 +224,10 @@ export async function count(selector) {
     return 1;
   }
   const backendNodeIds = await queryRoleBackendNodeIds(selector);
-  if (backendNodeIds !== null) {
-    return backendNodeIds.length;
+  const hrefBackendNodeIds =
+    backendNodeIds === null ? await queryHrefBackendNodeIds(selector) : null;
+  if (backendNodeIds !== null || hrefBackendNodeIds !== null) {
+    return (backendNodeIds ?? hrefBackendNodeIds).length;
   }
   return readQueryAll(selector, "return elements.length;");
 }
@@ -295,8 +298,15 @@ export async function evaluateAll(selector, pageFunction, arg = undefined) {
     );
   }
   const backendNodeIds = await queryRoleBackendNodeIds(selector);
-  if (backendNodeIds !== null) {
-    return evaluateRoleBackendNodes(backendNodeIds, functionSource, arg, true);
+  const hrefBackendNodeIds =
+    backendNodeIds === null ? await queryHrefBackendNodeIds(selector) : null;
+  if (backendNodeIds !== null || hrefBackendNodeIds !== null) {
+    return evaluateRoleBackendNodes(
+      backendNodeIds ?? hrefBackendNodeIds,
+      functionSource,
+      arg,
+      true,
+    );
   }
   return evaluateQueryAll(selector, functionSource, arg);
 }
@@ -342,9 +352,11 @@ async function readOptionalElement(
 
 async function readQueryAll(selector, body) {
   const backendNodeIds = await queryRoleBackendNodeIds(selector);
-  if (backendNodeIds !== null) {
+  const hrefBackendNodeIds =
+    backendNodeIds === null ? await queryHrefBackendNodeIds(selector) : null;
+  if (backendNodeIds !== null || hrefBackendNodeIds !== null) {
     return evaluateRoleBackendNodes(
-      backendNodeIds,
+      backendNodeIds ?? hrefBackendNodeIds,
       `function(elements){${body}}`,
       undefined,
       false,
@@ -427,6 +439,10 @@ async function evaluateRoleBackendNodes(
 
 function queryRoleBackendNodeIds(selector) {
   return queryRoleLocatorBackendNodeIds({ sendRaw: cdp }, undefined, selector);
+}
+
+function queryHrefBackendNodeIds(selector) {
+  return queryHrefLocatorBackendNodeIds({ sendRaw: cdp }, undefined, selector);
 }
 
 async function evaluateQueryAll(selector, functionSource, arg) {

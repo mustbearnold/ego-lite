@@ -173,6 +173,63 @@ test("role locator searches nested frame AX trees", async () => {
   );
 });
 
+test("href locator searches nested frame AX trees", async () => {
+  const cdp = new FakeCDP(async (method, params, sessionId) => {
+    assert.equal(sessionId, undefined);
+    if (method === "Page.getFrameTree") {
+      return {
+        frameTree: {
+          frame: { id: "root-frame" },
+          childFrames: [{ frame: { id: "child-frame" } }],
+        },
+      };
+    }
+    if (method === "Accessibility.getFullAXTree") {
+      return params.frameId === "child-frame"
+        ? {
+            nodes: [
+              {
+                role: { value: "link" },
+                name: { value: "Child link" },
+                properties: [
+                  {
+                    name: "url",
+                    value: {
+                      type: "string",
+                      value: "http://127.0.0.1:4321/clicked",
+                    },
+                  },
+                ],
+                backendDOMNodeId: 201,
+              },
+            ],
+          }
+        : { nodes: [] };
+    }
+    if (method === "DOM.getBoxModel") {
+      assert.equal(params.backendNodeId, 201);
+      return { model: { content: [10, 20, 30, 20, 30, 60, 10, 60] } };
+    }
+    return {};
+  });
+  const point = await resolveElementCenter(
+    cdp,
+    undefined,
+    new RefMap(),
+    "loc=href:/clicked",
+  );
+  assert.deepEqual(point, { x: 20, y: 40, sessionId: undefined });
+  assert.deepEqual(
+    cdp.calls.map(([method, params]) => [method, params]),
+    [
+      ["Page.getFrameTree", {}],
+      ["Accessibility.getFullAXTree", { frameId: "root-frame" }],
+      ["Accessibility.getFullAXTree", { frameId: "child-frame" }],
+      ["DOM.getBoxModel", { backendNodeId: 201 }],
+    ],
+  );
+});
+
 test("css locator matched 0 elements is transient", async () => {
   const cdp = new FakeCDP(async (method) => {
     if (method === "Runtime.evaluate") {

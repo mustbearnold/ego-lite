@@ -54,6 +54,37 @@ test("snapshot renderer emits action marks and stable role locators", () => {
   ]);
 });
 
+test("snapshot renderer emits href locators and URLs for links", () => {
+  const result = renderAccessibilityTree(
+    [
+      {
+        nodeId: "root",
+        role: { value: "RootWebArea" },
+        childIds: ["link"],
+      },
+      {
+        nodeId: "link",
+        role: { value: "link" },
+        name: { value: "Open next page" },
+        properties: [
+          {
+            name: "url",
+            value: { type: "string", value: "https://example.com/next" },
+          },
+        ],
+        childIds: [],
+        backendDOMNodeId: 7,
+      },
+    ],
+    { includeActionMarks: true, includeStableLocator: true },
+  );
+
+  assert.match(
+    result.content,
+    /- link "Open next page" \[ref=7, loc=href:https:\/\/example\.com\/next, url="https:\/\/example\.com\/next"\]/,
+  );
+});
+
 test("snapshot renderer honors compact options and result limits", () => {
   const result = renderAccessibilityTree(fixtureNodes, {
     includeActionMarks: false,

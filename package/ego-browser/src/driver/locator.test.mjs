@@ -218,6 +218,55 @@ test("role locators use AX regex accessible names in collection queries", async 
   );
 });
 
+test("href locators use the frame-aware AX match set in collection queries", async () => {
+  const selector = "loc=href:/clicked";
+  const calls = [];
+  const restore = setOverrides({
+    cdpOverride(method, params) {
+      calls.push({ method, params });
+      if (method === "Page.getFrameTree") {
+        return {
+          frameTree: {
+            frame: { id: "root-frame" },
+            childFrames: [{ frame: { id: "child-frame" } }],
+          },
+        };
+      }
+      if (method === "Accessibility.getFullAXTree") {
+        return params.frameId === "child-frame"
+          ? {
+              nodes: [
+                {
+                  role: { value: "link" },
+                  properties: [
+                    {
+                      name: "url",
+                      value: {
+                        type: "string",
+                        value: "http://127.0.0.1:4321/clicked",
+                      },
+                    },
+                  ],
+                  backendDOMNodeId: 201,
+                },
+              ],
+            }
+          : { nodes: [] };
+      }
+      throw new Error(`Unexpected CDP method: ${method}`);
+    },
+  });
+  try {
+    assert.equal(await count(selector), 1);
+  } finally {
+    restore();
+  }
+  assert.deepEqual(
+    calls.map((call) => call.method),
+    ["Page.getFrameTree", "Accessibility.getFullAXTree", "Accessibility.getFullAXTree"],
+  );
+});
+
 test("role collections use the same AX match set as nth element operations", async () => {
   const selector = 'loc=role:option[name="House"]';
   const second = `internal:nth=1;${selector}`;
