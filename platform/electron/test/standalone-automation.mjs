@@ -179,7 +179,14 @@ try {
       ],
     })}\n`,
   );
-  fixtureServer = createServer((_request, response) => {
+  fixtureServer = createServer((request, response) => {
+    const path = new URL(request.url, "http://127.0.0.1").pathname;
+    if (path === "/history-one" || path === "/history-two") {
+      const marker = path === "/history-one" ? "HISTORY_ONE" : "HISTORY_TWO";
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(`<!doctype html><title>Standalone History</title><main><input id="move-state"><div style="height:2400px">${marker}</div></main>`);
+      return;
+    }
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     response.end("<!doctype html><title>Standalone automation</title><main>STANDALONE_AUTOMATION</main>");
   });
@@ -188,6 +195,8 @@ try {
     fixtureServer.listen(0, "127.0.0.1", resolvePromise);
   });
   const fixtureUrl = `http://127.0.0.1:${fixtureServer.address().port}/fixture`;
+  const historyOneUrl = `http://127.0.0.1:${fixtureServer.address().port}/history-one`;
+  const historyTwoUrl = `http://127.0.0.1:${fixtureServer.address().port}/history-two`;
   const savedPath = join(profileRoot, "artifacts", "standalone-page.html");
   const printedPath = join(profileRoot, "artifacts", "standalone-page.pdf");
 
@@ -269,6 +278,74 @@ try {
   assert.equal(movedBackToPrimary.moved, true);
   assert.equal(movedBackToPrimary.tab.spaceId, null);
   tabId = movedBackToPrimary.tab.targetId;
+
+  const historyCreated = await automation({
+    version: 1,
+    action: "tab.create",
+    params: { url: historyOneUrl },
+  });
+  await automation({
+    version: 1,
+    action: "tab.navigate",
+    params: { id: historyCreated.tab.targetId, url: historyTwoUrl },
+  });
+  const historySeeded = await automation({
+    version: 1,
+    action: "tab.execute",
+    params: {
+      id: historyCreated.tab.targetId,
+      javascript: "(() => { const field = document.querySelector('#move-state'); field.value = 'preserved'; window.scrollTo(0, 500); return { value: field.value, scrollY: window.scrollY }; })()",
+    },
+  });
+  assert.equal(historySeeded.value.value, "preserved");
+  assert.ok(historySeeded.value.scrollY >= 400);
+  const historyMoved = await automation({
+    version: 1,
+    action: "standard.move",
+    params: {
+      kind: "tab",
+      id: historyCreated.tab.targetId,
+      to: { title: "Standalone Space" },
+    },
+  });
+  assert.equal(historyMoved.preservation.history.status, "restored");
+  assert.equal(historyMoved.preservation.interaction.status, "restored");
+  const restoredHistoryState = await automation({
+    version: 1,
+    action: "tab.execute",
+    params: {
+      id: historyMoved.tab.targetId,
+      spaceId: 1,
+      javascript: "({ value: document.querySelector('#move-state').value, scrollY: window.scrollY })",
+    },
+  });
+  assert.equal(restoredHistoryState.value.value, "preserved");
+  assert.ok(restoredHistoryState.value.scrollY >= 400);
+  await automation({
+    version: 1,
+    action: "tab.back",
+    params: { id: historyMoved.tab.targetId, spaceId: 1 },
+  });
+  await waitFor("standalone moved history back navigation", async () => {
+    const result = await automation({
+      version: 1,
+      action: "tab.execute",
+      params: { id: historyMoved.tab.targetId, spaceId: 1, javascript: "location.href" },
+    });
+    return result.value === historyOneUrl;
+  });
+  const historyMovedBack = await automation({
+    version: 1,
+    action: "standard.move",
+    params: {
+      kind: "tab",
+      id: historyMoved.tab.targetId,
+      sourceSpaceId: "Standalone Space",
+      to: "primary",
+    },
+  });
+  assert.equal(historyMovedBack.preservation.history.status, "restored");
+  await automation({ version: 1, action: "tab.close", params: { id: historyMovedBack.tab.targetId } });
 
   const folderAdded = await automation({
     version: 1,

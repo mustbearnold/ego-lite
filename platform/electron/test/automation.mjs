@@ -179,6 +179,12 @@ try {
       );
       return;
     }
+    if (path === "/history-one" || path === "/history-two") {
+      const marker = path === "/history-one" ? "HISTORY_ONE" : "HISTORY_TWO";
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(`<!doctype html><title>Automation History</title><main><input id="move-state"><div style="height:2400px">${marker}</div></main>`);
+      return;
+    }
     const pages = {
       "/one": ["Automation One", "AUTOMATION_ONE"],
       "/two": ["Automation Two", "AUTOMATION_TWO"],
@@ -197,6 +203,8 @@ try {
   const twoUrl = pageUrl(port, "/two");
   const spaceUrl = pageUrl(port, "/space");
   const editorUrl = pageUrl(port, "/editor");
+  const historyOneUrl = pageUrl(port, "/history-one");
+  const historyTwoUrl = pageUrl(port, "/history-two");
   const savedPath = join(profileDir, "artifacts", "automation-page.html");
   const printedPath = join(profileDir, "artifacts", "automation-page.pdf");
 
@@ -576,6 +584,59 @@ try {
   });
   assert.equal(movedBackToPrimary.moved, true);
   assert.equal(movedBackToPrimary.tab.spaceId, null);
+
+  const historyCreated = await automation({
+    version: 1,
+    action: "tab.create",
+    params: { url: historyOneUrl },
+  });
+  await automation({
+    version: 1,
+    action: "tab.navigate",
+    params: { id: historyCreated.tab.id, url: historyTwoUrl, activate: true },
+  });
+  const historySeeded = await automation({
+    version: 1,
+    action: "tab.execute",
+    params: {
+      id: historyCreated.tab.id,
+      javascript: "(() => { const field = document.querySelector('#move-state'); field.value = 'preserved'; window.scrollTo(0, 500); return { value: field.value, scrollY: window.scrollY }; })()",
+    },
+  });
+  assert.equal(historySeeded.value.value, "preserved");
+  assert.ok(historySeeded.value.scrollY >= 400);
+  const historyMoved = await automation({
+    version: 1,
+    action: "standard.move",
+    params: {
+      kind: "tab",
+      id: historyCreated.tab.id,
+      to: { name: "Automation Space" },
+    },
+  });
+  assert.equal(historyMoved.preservation.history.status, "restored");
+  const restoredHistoryState = await automation({
+    version: 1,
+    action: "tab.execute",
+    params: {
+      id: historyMoved.tab.id,
+      javascript: "({ value: document.querySelector('#move-state').value, scrollY: window.scrollY })",
+    },
+  });
+  assert.equal(restoredHistoryState.value.value, "preserved");
+  assert.ok(restoredHistoryState.value.scrollY >= 400);
+  await automation({ version: 1, action: "tab.back", params: { id: historyMoved.tab.id } });
+  await waitFor("moved history back navigation", async () => {
+    const result = await automation({ version: 1, action: "tabs.list" });
+    return result.tabs.find((tab) => tab.id === historyMoved.tab.id)?.url === historyOneUrl;
+  });
+  const historyMovedBack = await automation({
+    version: 1,
+    action: "standard.move",
+    params: { kind: "tab", id: historyMoved.tab.id, to: "primary" },
+  });
+  assert.equal(historyMovedBack.preservation.history.status, "restored");
+  await automation({ version: 1, action: "tab.close", params: { id: historyMovedBack.tab.id } });
   await automation({ version: 1, action: "tab.activate", params: { id: taskTab.tab.id } });
   const activatedTask = await automation({ version: 1, action: "state" });
   assert.equal(activatedTask.activeTabId, taskTab.tab.id);

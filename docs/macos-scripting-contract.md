@@ -80,10 +80,14 @@ selectors instead of silently falling back to the active tab.
 and `at`, and `standard.move` accepts `to` as aliases for the typed fields.
 Tab moves accept `spaceId`, `destinationSpaceId`, or a Space name/task id for
 the destination, plus `sourceSpaceId` when the source is outside the currently
-selected standalone scope. Cross-Space moves recreate the destination view
-from the tab URL so the isolation boundary remains intact; transient page state
-and history are not promised to survive. AppleScript syntax and its full
-implicit specifier coercion are not reproduced.
+selected standalone scope. Cross-Space moves keep the storage isolation
+boundary: Electron restores Chromium's serialized navigation entries before
+the destination first loads, while standalone CDP rebuilds a bounded URL
+history and restores safe form/scroll state. Password/file controls, storage
+areas, POST bodies, and non-serializable application state are intentionally
+not copied. The response reports best-effort `preservation.history` and
+`preservation.interaction` statuses. AppleScript syntax and its full implicit
+specifier coercion are not reproduced.
 
 Electron delegates save to Chromium's page archive and print to Chromium's PDF
 output. The standalone host supports HTML/DOM serialization and MHTML capture

@@ -136,8 +136,11 @@ Tab selectors accept ids, names/titles, URLs, 1-based indices, and nested
 also accept nested folder paths; `standard.count`/`make`/`move` accept the
 AppleScript-shaped `each`/`new`/`at`/`to` aliases. `standard.move` can move an
 existing tab between the primary window and a named or numeric Agent Space;
-the destination view is recreated from its URL to preserve storage isolation,
-so in-memory page state is not promised to survive a cross-Space move.
+the destination view is recreated in the target storage partition, while
+Chromium navigation history and best-effort safe form/scroll state are
+preserved. The response reports `preservation.history` and
+`preservation.interaction`; password/file controls, storage areas, POST bodies,
+and non-serializable application state are not copied.
 `tab.execute`
 accepts `params.javascript`; `tab.save` and `tab.print` accept an explicit
 absolute or relative `params.path` (or the corresponding environment override

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFile, rename, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 export const AUTOMATION_VERSION = 1;
 
@@ -575,6 +576,11 @@ async function setAutomationSelection(host, targetIdValue) {
 }
 
 async function selectAutomationTarget(host, params = {}, tabs = null) {
+  if (params.spaceId !== undefined) {
+    const requestedSpaceId = await resolveStandaloneSpaceId(host, params.spaceId);
+    await useStandaloneScope(host, requestedSpaceId);
+    tabs = null;
+  }
   const listedTabs = tabs || (await host.listTabs()).tabs || [];
   if (hasTabSpecifier(params)) {
     const match = listedTabs.find((tab, index) =>
@@ -641,6 +647,267 @@ function runtimeValue(result) {
     );
   }
   return result.result?.value;
+}
+
+const MAX_MOVED_HISTORY_ENTRIES = 50;
+
+function standaloneNavigationUrl(value) {
+  const text = String(value || "").trim();
+  if (text.startsWith("view-source:")) {
+    return standaloneNavigationUrl(text.slice("view-source:".length))
+      ? text
+      : null;
+  }
+  try {
+    const url = new URL(text || "about:blank");
+    return ["about:", "file:", "http:", "https:"].includes(url.protocol)
+      ? url.toString()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+const CAPTURE_MOVED_INTERACTION_SCRIPT = `(() => {
+  const selectorFor = (element) => {
+    if (element.id) return { type: "id", value: element.id };
+    const parts = [];
+    let current = element;
+    while (current && current.nodeType === Node.ELEMENT_NODE) {
+      if (current === document.body) {
+        parts.unshift("body");
+        break;
+      }
+      const tag = current.localName;
+      let ordinal = 1;
+      for (let sibling = current.previousElementSibling; sibling; sibling = sibling.previousElementSibling) {
+        if (sibling.localName === tag) ordinal += 1;
+      }
+      parts.unshift(tag + ":nth-of-type(" + ordinal + ")");
+      current = current.parentElement;
+    }
+    return { type: "css", value: parts.join(">").slice(0, 500) };
+  };
+  const fields = Array.from(
+    document.querySelectorAll("input, textarea, select, [contenteditable=\\"true\\"]"),
+  )
+    .slice(0, 100)
+    .map((element) => {
+      const kind = element.localName;
+      const inputType = kind === "input" ? String(element.type || "text").toLowerCase() : kind;
+      if (inputType === "password" || inputType === "file") return null;
+      const result = { selector: selectorFor(element), kind, inputType };
+      if (kind === "input" && ["checkbox", "radio"].includes(inputType)) {
+        result.checked = Boolean(element.checked);
+      } else if (kind === "select") {
+        result.value = String(element.value || "").slice(0, 4000);
+        result.selectedIndex = Number(element.selectedIndex);
+      } else if (element.isContentEditable) {
+        result.text = String(element.textContent || "").slice(0, 4000);
+      } else {
+        result.value = String(element.value || "").slice(0, 4000);
+      }
+      return result;
+    })
+    .filter(Boolean);
+  const active = document.activeElement;
+  return {
+    scrollX: Math.round(window.scrollX),
+    scrollY: Math.round(window.scrollY),
+    fields,
+    active: active && active !== document.body ? selectorFor(active) : null,
+  };
+})()`;
+
+function normalizeStandaloneNavigationHistory(value) {
+  if (!value || !Array.isArray(value.entries)) return null;
+  const entries = [];
+  let activeIndex = 0;
+  for (const [rawIndex, entry] of value.entries.entries()) {
+    const url = standaloneNavigationUrl(entry?.url);
+    if (!url || entries.length >= MAX_MOVED_HISTORY_ENTRIES) continue;
+    entries.push({
+      url,
+      title: String(entry.title || ""),
+      ...(entry.userTypedURL ? { userTypedURL: String(entry.userTypedURL) } : {}),
+      ...(entry.transitionType ? { transitionType: String(entry.transitionType) } : {}),
+    });
+    if (rawIndex <= Number(value.currentIndex)) activeIndex = entries.length - 1;
+  }
+  return entries.length > 0
+    ? {
+        entries,
+        index: Math.max(0, Math.min(activeIndex, entries.length - 1)),
+      }
+    : null;
+}
+
+async function captureStandaloneMovedState(host, targetId) {
+  const { sessionId } = await targetSession(host, targetId);
+  try {
+    const history = normalizeStandaloneNavigationHistory(
+      await host.connection
+        .request("Page.getNavigationHistory", {}, sessionId)
+        .catch(() => null),
+    );
+    const interaction = await host.connection
+      .request(
+        "Runtime.evaluate",
+        {
+          expression: CAPTURE_MOVED_INTERACTION_SCRIPT,
+          returnByValue: true,
+        },
+        sessionId,
+      )
+      .then(runtimeValue)
+      .catch(() => null);
+    return { history, interaction };
+  } finally {
+    await host.connection
+      .request("Target.detachFromTarget", { sessionId })
+      .catch(() => {});
+  }
+}
+
+async function waitForStandalonePage(host, sessionId, expectedUrl = null) {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    try {
+      const page = runtimeValue(
+        await host.connection.request(
+          "Runtime.evaluate",
+          {
+            expression: "({ href: location.href, readyState: document.readyState })",
+            returnByValue: true,
+          },
+          sessionId,
+        ),
+      );
+      if (
+        page?.readyState === "complete" &&
+        (!expectedUrl || page.href === expectedUrl)
+      ) {
+        return true;
+      }
+    } catch {
+      // The renderer can briefly reject evaluation between navigations.
+    }
+    await delay(25);
+  }
+  return false;
+}
+
+function restoreMovedInteractionScript(interaction) {
+  return `(() => {
+    const state = ${JSON.stringify(interaction || {})};
+    const find = (descriptor) => {
+      if (!descriptor) return null;
+      try {
+        return descriptor.type === "id"
+          ? document.getElementById(descriptor.value)
+          : document.querySelector(descriptor.value);
+      } catch {
+        return null;
+      }
+    };
+    let restored = 0;
+    for (const field of Array.isArray(state.fields) ? state.fields : []) {
+      const element = find(field.selector);
+      if (!element) continue;
+      if (field.kind === "input" && ["checkbox", "radio"].includes(field.inputType)) {
+        element.checked = Boolean(field.checked);
+      } else if (field.kind === "select") {
+        element.value = String(field.value || "");
+        if (Number.isInteger(field.selectedIndex) && element.selectedIndex < 0) {
+          element.selectedIndex = field.selectedIndex;
+        }
+      } else if (element.isContentEditable) {
+        element.textContent = String(field.text || "");
+      } else if ("value" in element) {
+        element.value = String(field.value || "");
+      }
+      restored += 1;
+    }
+    window.scrollTo(Number(state.scrollX) || 0, Number(state.scrollY) || 0);
+    const active = find(state.active);
+    if (active && typeof active.focus === "function") active.focus();
+    return { restored, scrollX: Math.round(window.scrollX), scrollY: Math.round(window.scrollY) };
+  })()`;
+}
+
+async function restoreStandaloneMovedState(host, targetId, preserved) {
+  const { sessionId } = await targetSession(host, targetId);
+  const result = {
+    history: { status: "unavailable", entries: 0 },
+    interaction: { status: "unavailable", fields: 0 },
+  };
+  try {
+    const preservedHistory = preserved?.history;
+    if (preservedHistory?.entries?.length) {
+      try {
+        await host.connection.request("Page.resetNavigationHistory", {}, sessionId);
+        for (const entry of preservedHistory.entries) {
+          await host.connection.request("Page.navigate", { url: entry.url }, sessionId);
+          if (!(await waitForStandalonePage(host, sessionId, entry.url))) {
+            throw new Error(`moved history entry did not finish loading: ${entry.url}`);
+          }
+        }
+        const destinationHistory = await host.connection.request(
+          "Page.getNavigationHistory",
+          {},
+          sessionId,
+        );
+        const destinationEntry =
+          destinationHistory.entries?.[preservedHistory.index] ||
+          destinationHistory.entries?.at(-1);
+        if (destinationEntry?.id !== undefined && preservedHistory.index < destinationHistory.entries.length) {
+          await host.connection.request(
+            "Page.navigateToHistoryEntry",
+            { entryId: destinationEntry.id },
+            sessionId,
+          );
+          if (!(await waitForStandalonePage(host, sessionId, destinationEntry.url))) {
+            throw new Error(`moved active history entry did not finish loading: ${destinationEntry.url}`);
+          }
+        }
+        result.history = {
+          status: "restored",
+          entries: preservedHistory.entries.length,
+          index: preservedHistory.index,
+        };
+      } catch (error) {
+        result.history = {
+          status: "failed",
+          entries: preservedHistory.entries.length,
+          message: error?.message || String(error),
+        };
+      }
+    }
+    if (preserved?.interaction) {
+      await waitForStandalonePage(host, sessionId);
+      const restored = runtimeValue(
+        await host.connection.request(
+          "Runtime.evaluate",
+          {
+            expression: restoreMovedInteractionScript(preserved.interaction),
+            returnByValue: true,
+          },
+          sessionId,
+        ),
+      );
+      result.interaction = {
+        status: "restored",
+        fields: Number(restored?.restored) || 0,
+        scrollX: Number(restored?.scrollX) || 0,
+        scrollY: Number(restored?.scrollY) || 0,
+      };
+    }
+  } finally {
+    await host.connection
+      .request("Target.detachFromTarget", { sessionId })
+      .catch(() => {});
+  }
+  return result;
 }
 
 async function standaloneTabCommand(host, request) {
@@ -1133,7 +1400,7 @@ async function useStandaloneScope(host, spaceId) {
   return host.useTaskSpace(spaceId);
 }
 
-async function createStandaloneMovedTab(host, spaceId, url) {
+async function createStandaloneMovedTab(host, spaceId, url, preserved = null) {
   await useStandaloneScope(host, spaceId);
   const before = (await host.listTabs()).tabs || [];
   const blank =
@@ -1148,7 +1415,13 @@ async function createStandaloneMovedTab(host, spaceId, url) {
       })
       .catch(() => {});
   }
-  return tab;
+  const preservation = preserved
+    ? await restoreStandaloneMovedState(host, tab.targetId, preserved)
+    : {
+        history: { status: "unavailable", entries: 0 },
+        interaction: { status: "unavailable", fields: 0 },
+      };
+  return { tab, preservation };
 }
 
 async function standaloneTabAction(host, request) {
@@ -1418,11 +1691,16 @@ export async function runStandaloneAutomation(host, request) {
       if (source.private && destinationSpaceId !== null) {
         throw new Error("private tabs cannot move into an Agent Space");
       }
-      const movedTab = await createStandaloneMovedTab(
+      const preserved = await captureStandaloneMovedState(host, source.targetId).catch(
+        () => null,
+      );
+      const moved = await createStandaloneMovedTab(
         host,
         destinationSpaceId,
         source.url || "about:blank",
+        preserved,
       );
+      const movedTab = moved.tab;
       if (sourceSpaceId === null && destinationSpaceId !== null) {
         await useStandaloneScope(host, null);
         await host.createTab("about:blank");
@@ -1441,6 +1719,7 @@ export async function runStandaloneAutomation(host, request) {
         kind,
         fromSpaceId: sourceSpaceId,
         spaceId: destinationSpaceId,
+        preservation: moved.preservation,
         tab:
           finalState.tabs.find((tab) => tab.targetId === movedTab.targetId) ||
           finalState.tabs.find((tab) => tab.id === movedTab.targetId) ||

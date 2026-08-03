@@ -2437,6 +2437,197 @@ function sessionTabUrl(value) {
   }
 }
 
+const MAX_MOVED_HISTORY_ENTRIES = 50;
+
+function captureMovedElectronHistory(view) {
+  const navigationHistory = view?.webContents?.navigationHistory;
+  if (!navigationHistory) return null;
+  try {
+    const rawEntries = navigationHistory.getAllEntries();
+    const activeIndex = navigationHistory.getActiveIndex();
+    const entries = [];
+    let movedActiveIndex = 0;
+    for (const [rawIndex, entry] of rawEntries.entries()) {
+      const url = sessionTabUrl(entry?.url);
+      if (!url || entries.length >= MAX_MOVED_HISTORY_ENTRIES) continue;
+      entries.push({
+        title: String(entry.title || ""),
+        url,
+        ...(typeof entry.pageState === "string"
+          ? { pageState: entry.pageState }
+          : {}),
+      });
+      if (rawIndex <= activeIndex) movedActiveIndex = entries.length - 1;
+    }
+    return entries.length > 0
+      ? {
+          entries,
+          index: Math.max(0, Math.min(movedActiveIndex, entries.length - 1)),
+        }
+      : null;
+  } catch (error) {
+    console.warn(
+      `[ego-lite] could not capture moved-tab history: ${error?.message || String(error)}`,
+    );
+    return null;
+  }
+}
+
+async function restoreMovedElectronHistory(view, preserved) {
+  const entries = preserved?.entries;
+  const navigationHistory = view?.webContents?.navigationHistory;
+  if (!navigationHistory || !Array.isArray(entries) || entries.length === 0) {
+    return {
+      history: { status: "unavailable", entries: 0 },
+      interaction: { status: "unavailable" },
+    };
+  }
+  if (typeof navigationHistory.restore !== "function") {
+    return {
+      history: { status: "unsupported", entries: entries.length },
+      interaction: { status: "unavailable" },
+    };
+  }
+  try {
+    await navigationHistory.restore({
+      entries,
+      index: Number.isInteger(preserved.index) ? preserved.index : undefined,
+    });
+    return {
+      history: {
+        status: "restored",
+        entries: entries.length,
+        index: Number.isInteger(preserved.index) ? preserved.index : entries.length - 1,
+      },
+      interaction: { status: "restored-with-history" },
+    };
+  } catch (error) {
+    console.warn(
+      `[ego-lite] could not restore moved-tab history: ${error?.message || String(error)}`,
+    );
+    return {
+      history: {
+        status: "failed",
+        entries: entries.length,
+        message: error?.message || String(error),
+      },
+      interaction: { status: "unavailable" },
+    };
+  }
+}
+
+const CAPTURE_MOVED_INTERACTION_SCRIPT = `(() => {
+  const selectorFor = (element) => {
+    if (element.id) return { type: "id", value: element.id };
+    const parts = [];
+    let current = element;
+    while (current && current.nodeType === Node.ELEMENT_NODE) {
+      if (current === document.body) {
+        parts.unshift("body");
+        break;
+      }
+      const tag = current.localName;
+      let ordinal = 1;
+      for (let sibling = current.previousElementSibling; sibling; sibling = sibling.previousElementSibling) {
+        if (sibling.localName === tag) ordinal += 1;
+      }
+      parts.unshift(tag + ":nth-of-type(" + ordinal + ")");
+      current = current.parentElement;
+    }
+    return { type: "css", value: parts.join(">").slice(0, 500) };
+  };
+  const fields = Array.from(
+    document.querySelectorAll("input, textarea, select, [contenteditable=\\"true\\"]"),
+  )
+    .slice(0, 100)
+    .map((element) => {
+      const kind = element.localName;
+      const inputType = kind === "input" ? String(element.type || "text").toLowerCase() : kind;
+      if (inputType === "password" || inputType === "file") return null;
+      const result = { selector: selectorFor(element), kind, inputType };
+      if (kind === "input" && ["checkbox", "radio"].includes(inputType)) {
+        result.checked = Boolean(element.checked);
+      } else if (kind === "select") {
+        result.value = String(element.value || "").slice(0, 4000);
+      } else if (element.isContentEditable) {
+        result.text = String(element.textContent || "").slice(0, 4000);
+      } else {
+        result.value = String(element.value || "").slice(0, 4000);
+      }
+      return result;
+    })
+    .filter(Boolean);
+  const active = document.activeElement;
+  return {
+    scrollX: Math.round(window.scrollX),
+    scrollY: Math.round(window.scrollY),
+    fields,
+    active: active && active !== document.body ? selectorFor(active) : null,
+  };
+})()`;
+
+async function captureMovedElectronInteraction(view) {
+  try {
+    return await view.webContents.executeJavaScript(
+      CAPTURE_MOVED_INTERACTION_SCRIPT,
+      true,
+    );
+  } catch (error) {
+    console.warn(
+      `[ego-lite] could not capture moved-tab interaction state: ${error?.message || String(error)}`,
+    );
+    return null;
+  }
+}
+
+async function restoreMovedElectronInteraction(view, interaction) {
+  if (!view || !interaction) return { status: "unavailable" };
+  const expression = `(() => {
+    const state = ${JSON.stringify(interaction)};
+    const find = (descriptor) => {
+      if (!descriptor) return null;
+      try {
+        return descriptor.type === "id"
+          ? document.getElementById(descriptor.value)
+          : document.querySelector(descriptor.value);
+      } catch {
+        return null;
+      }
+    };
+    let restored = 0;
+    for (const field of Array.isArray(state.fields) ? state.fields : []) {
+      const element = find(field.selector);
+      if (!element) continue;
+      if (field.kind === "input" && ["checkbox", "radio"].includes(field.inputType)) {
+        element.checked = Boolean(field.checked);
+      } else if (element.isContentEditable) {
+        element.textContent = String(field.text || "");
+      } else if ("value" in element) {
+        element.value = String(field.value || "");
+      }
+      restored += 1;
+    }
+    const active = find(state.active);
+    if (active && typeof active.focus === "function") active.focus();
+    window.scrollTo(Number(state.scrollX) || 0, Number(state.scrollY) || 0);
+    return { restored, scrollX: Math.round(window.scrollX), scrollY: Math.round(window.scrollY) };
+  })()`;
+  try {
+    const result = await view.webContents.executeJavaScript(expression, true);
+    return {
+      status: "restored",
+      fields: Number(result?.restored) || 0,
+      scrollX: Number(result?.scrollX) || 0,
+      scrollY: Number(result?.scrollY) || 0,
+    };
+  } catch (error) {
+    return {
+      status: "failed",
+      message: error?.message || String(error),
+    };
+  }
+}
+
 function primaryManagedViews() {
   return [...managedViews.entries()].filter(
     ([, managed]) => managed.spaceId === null,
@@ -3454,9 +3645,10 @@ async function createManagedView({
   spaceId,
   spaceName = null,
   url = "about:blank",
+  deferLoad = false,
 }) {
   if (spaceId === null) {
-    const primary = await createPrimaryBrowserView({ url });
+    const primary = await createPrimaryBrowserView({ url, deferLoad });
     return { targetId: primary.targetId };
   }
   const partition = `persist:ego-lite-${String(spaceId).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
@@ -3478,7 +3670,7 @@ async function createManagedView({
     });
     return { action: "deny" };
   });
-  await view.webContents.loadURL(normalizeUrl(url));
+  if (!deferLoad) await view.webContents.loadURL(normalizeUrl(url));
   const targetId = await registerManagedView(view, { spaceId, spaceName });
   return { targetId };
 }
@@ -3661,13 +3853,17 @@ async function moveManagedTab(targetId, destinationSpaceId, params = {}) {
   if (source.private && destinationSpaceId !== null) {
     throw new Error("private tabs cannot move into an Agent Space");
   }
+  const preservedHistory = captureMovedElectronHistory(source.view);
+  const preservedInteraction = await captureMovedElectronInteraction(source.view);
   const url = sessionTabUrl(source.view.webContents.getURL()) || "about:blank";
+  const shouldRestoreHistory = Boolean(preservedHistory?.entries?.length);
   const created =
     destinationSpaceId === null
       ? await createPrimaryBrowserView({
-          url,
+          url: shouldRestoreHistory ? "about:blank" : url,
           tabGroup: source.tabGroup,
           privateMode: source.private,
+          deferLoad: shouldRestoreHistory,
         })
       : await createManagedView({
           spaceId: destinationSpaceId,
@@ -3675,8 +3871,30 @@ async function moveManagedTab(targetId, destinationSpaceId, params = {}) {
             readTaskSpaceState().spaces.find(
               (space) => Number(space.id) === destinationSpaceId,
             )?.name || null,
-          url,
+          url: shouldRestoreHistory ? "about:blank" : url,
+          deferLoad: shouldRestoreHistory,
         });
+  const destinationView =
+    created.view || managedViews.get(created.targetId)?.view || null;
+  const preservation = await restoreMovedElectronHistory(
+    destinationView,
+    preservedHistory,
+  );
+  if (
+    shouldRestoreHistory &&
+    preservation.history.status !== "restored" &&
+    destinationView
+  ) {
+    await navigateOnView(destinationView, url).catch((error) => {
+      console.warn(
+        `[ego-lite] could not fall back to moved-tab URL ${url}: ${error?.message || String(error)}`,
+      );
+    });
+  }
+  preservation.interaction = await restoreMovedElectronInteraction(
+    destinationView,
+    preservedInteraction,
+  );
   if (source.spaceId === null && destinationSpaceId !== null && primaryManagedViews().length === 1) {
     await createPrimaryBrowserView({ url: "about:blank" });
   }
@@ -3692,6 +3910,7 @@ async function moveManagedTab(targetId, destinationSpaceId, params = {}) {
     moved: true,
     fromSpaceId: source.spaceId,
     spaceId: destinationSpaceId,
+    preservation,
     tab: automationTab(created.targetId, managedViews.get(created.targetId)),
   };
 }
@@ -4239,6 +4458,7 @@ async function createPrimaryBrowserView({
   tabId = null,
   tabGroup = null,
   privateMode = false,
+  deferLoad = false,
 } = {}) {
   const webPreferences = {
     contextIsolation: true,
@@ -4259,13 +4479,15 @@ async function createPrimaryBrowserView({
     return { action: "deny" };
   });
   if (!privateMode) await loadMigratedExtensions(view.webContents.session);
-  try {
-    await view.webContents.loadURL(normalizeUrl(url));
-  } catch (error) {
-    console.warn(
-      `[ego-lite] could not restore ${url}: ${error?.message || String(error)}`,
-    );
-    await view.webContents.loadURL("about:blank");
+  if (!deferLoad) {
+    try {
+      await view.webContents.loadURL(normalizeUrl(url));
+    } catch (error) {
+      console.warn(
+        `[ego-lite] could not restore ${url}: ${error?.message || String(error)}`,
+      );
+      await view.webContents.loadURL("about:blank");
+    }
   }
   const targetId = await registerManagedView(view, {
     tabId,
