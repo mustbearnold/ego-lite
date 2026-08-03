@@ -116,9 +116,12 @@ The adapter accepts the observed `tell application` wrapper for `ego lite`,
 properties and commands, window and tab specifiers, bookmark folders/items,
 `get`, `count`, `exists`, `set URL`/window name, `open`, `print`, `save`,
 `execute javascript`, tab editing/navigation commands, and the covered
-standard-suite `delete`, `duplicate`, `make new`, and `move` forms. `get`,
-`count`, and `exists` return their value under `result.value`; mutating commands
-retain the typed automation result so callers can inspect the resulting state.
+standard-suite `delete`, `duplicate`, `make new`, and `move` forms. Collection
+properties support `every`, ordinal selectors support `first` and `last`, and
+parent-scoped collection reads/counts are projected against the selected
+window, Space, or bookmark folder. `get`, `count`, and `exists` return their
+value under `result.value`; mutating commands retain the typed automation result
+so callers can inspect the resulting state.
 
 The adapter intentionally rejects unsupported application targets and forms it
 cannot translate. Print and save use explicit `in file` paths (or the existing

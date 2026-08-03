@@ -202,6 +202,23 @@ try {
     ).result.value,
     3,
   );
+  const scopedCount = parseAppleScript("count tabs of window 1");
+  assert.deepEqual(scopedCount.request, {
+    version: 1,
+    action: "state",
+    params: {},
+  });
+  assert.equal(scopedCount.projection.type, "count");
+  const lastTab = parseAppleScript("get URL of last tab");
+  assert.equal(lastTab.projection.selector.last, true);
+  const reloadLast = parseAppleScript("reload last tab");
+  assert.deepEqual(reloadLast.request, {
+    version: 1,
+    action: "tab.reload",
+    params: { last: true },
+  });
+  const collectionProperty = parseAppleScript("get URL of every tab");
+  assert.equal(collectionProperty.projection.property, "url");
   const multi = parseAppleScript(tell("get URL of tab 1\nget title of tab 1"));
   assert.equal(multi.ok, true);
   assert.equal(multi.statementCount, 2);
@@ -263,8 +280,30 @@ try {
   assert.equal(standaloneMulti.script.statements, 2);
   const standaloneCount = await runStandalone("count tabs");
   assert.ok(standaloneCount.result.value >= 1);
+  const standaloneWindowCount = await runStandalone(
+    tell("count tabs of window 1"),
+  );
+  assert.equal(
+    standaloneWindowCount.result.value,
+    standaloneCount.result.value,
+  );
+  const standaloneUrls = await runStandalone(
+    tell("get URL of every tab of window 1"),
+  );
+  assert.ok(Array.isArray(standaloneUrls.result.value));
+  assert.ok(standaloneUrls.result.value.includes(oneUrl));
+  const standaloneLastUrl = await runStandalone(
+    tell("get URL of last tab"),
+  );
+  assert.ok(standaloneUrls.result.value.includes(standaloneLastUrl.result.value));
+  const standaloneReloadLast = await runStandalone(
+    tell("reload last tab\nget URL of last tab"),
+  );
+  assert.equal(standaloneReloadLast.result.value, standaloneLastUrl.result.value);
   const standaloneExists = await runStandalone("exists active tab");
   assert.equal(standaloneExists.result.value, true);
+  const standaloneApplicationExists = await runStandalone("exists application");
+  assert.equal(standaloneApplicationExists.result.value, true);
   const standaloneExecute = await runStandalone(
     tell('execute active tab javascript "document.querySelector(\\\'main\\\').textContent"'),
   );
@@ -283,6 +322,24 @@ try {
   assert.equal(electronMulti.ok, true);
   assert.equal(electronMulti.result.value, oneUrl);
   assert.equal(electronMulti.script.statements, 2);
+  const electronUrls = await runElectron(
+    tell(`open "${oneUrl}"\nget URL of every tab of window 1`),
+  );
+  assert.ok(Array.isArray(electronUrls.result.value));
+  assert.ok(electronUrls.result.value.includes(oneUrl));
+  assert.equal(electronUrls.script.statements, 2);
+  const electronLastUrl = await runElectron(
+    tell(`open "${oneUrl}"\nget URL of last tab`),
+  );
+  assert.equal(electronLastUrl.result.value, oneUrl);
+  assert.equal(electronLastUrl.script.statements, 2);
+  const electronReloadLast = await runElectron(
+    tell(`open "${oneUrl}"\nreload last tab\nget URL of last tab`),
+  );
+  assert.equal(electronReloadLast.result.value, oneUrl);
+  assert.equal(electronReloadLast.script.statements, 3);
+  const electronApplicationExists = await runElectron("exists application");
+  assert.equal(electronApplicationExists.result.value, true);
   const electronUrl = { result: { value: electronOpened.result.tab.url } };
   const electronVisible = await runElectron(tell("get visible of window 1"));
   assert.equal(electronVisible.result.value, false);

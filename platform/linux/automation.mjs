@@ -585,8 +585,8 @@ async function selectAutomationTarget(host, params = {}, tabs = null) {
   }
   const listedTabs = tabs || (await host.listTabs()).tabs || [];
   if (hasTabSpecifier(params)) {
-    const match = listedTabs.find((tab, index) =>
-      tabMatchesSpecifier(tab, params, index + 1),
+    const match = listedTabs.find((tab, index, candidates) =>
+      tabMatchesSpecifier(tab, params, index + 1, candidates.length),
     );
     if (!match) throw new Error("automation tab specifier did not match a tab");
     host.selectedTargetId = match.targetId;
@@ -615,16 +615,17 @@ function hasTabSpecifier(params = {}) {
     params.title,
     params.url,
     params.index,
+    params.last,
     specifier,
   ].some((value) => value !== undefined && value !== null && String(value) !== "");
 }
 
-function tabMatchesSpecifier(tab, params = {}, index) {
+function tabMatchesSpecifier(tab, params = {}, index, count) {
   const id = params.id ?? params.targetId;
   if (id !== undefined && id !== null && String(id) !== "") {
     return String(tab.targetId ?? tab.id ?? "") === String(id);
   }
-  return standardMatches({ ...tab, index }, params);
+  return standardMatches({ ...tab, index }, params, index, count);
 }
 
 async function targetSession(host, id) {
@@ -1194,7 +1195,7 @@ function standardCandidates(state, kindValue) {
   );
 }
 
-function standardMatches(candidate, params = {}) {
+function standardMatches(candidate, params = {}, position, count) {
   if (params.active === true && !candidate.active) return false;
   const specifier = standardSpecifierValue(params);
   if (
@@ -1220,6 +1221,7 @@ function standardMatches(candidate, params = {}) {
     }
   }
   const fields = standardSpecifierFields(params);
+  if (fields.last === true && position !== count) return false;
   const id = fields.id ?? fields.targetId ?? fields.taskId;
   const name = fields.name ?? fields.title;
   if (id !== undefined && id !== null && String(id) !== "") {
@@ -1262,7 +1264,11 @@ function standardMatches(candidate, params = {}) {
 
 function standardFind(state, params = {}) {
   const candidates = standardCandidates(state, params.kind ?? params.type);
-  return candidates.find((candidate) => standardMatches(candidate, params)) || null;
+  return (
+    candidates.find((candidate, index, values) =>
+      standardMatches(candidate, params, index + 1, values.length),
+    ) || null
+  );
 }
 
 function destinationSpaceValue(params = {}) {

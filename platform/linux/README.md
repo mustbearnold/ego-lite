@@ -88,9 +88,11 @@ printf '%s\n' 'reload active tab' | ego-lite --applescript
 The supported subset covers `tell application`, application/window/tab and
 bookmark specifiers, `get`, `count`, `exists`, `set`, `open`, explicit-file
 `print`/`save`, JavaScript execution, tab editing/navigation, and the covered
-standard-suite mutations. `get`, `count`, and `exists` project a scalar under
-`result.value`; other successful responses retain the typed result. Commands in
-a block execute sequentially, and multi-command responses include
+standard-suite mutations. Collection properties can be projected with `every`
+and ordinal selectors support `first` and `last`; scoped collection reads and
+counts retain their parent object. `get`, `count`, and `exists` project under
+`result.value`; other successful responses retain the typed result.
+Commands in a block execute sequentially, and multi-command responses include
 `script.statements`. This is not native AppleScript: complete implicit
 specifier coercion, unsupported AppleScript records, and the native macOS print
 dialog remain outside the Linux host boundary.

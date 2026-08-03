@@ -1328,11 +1328,12 @@ function hasStandardSpecifier(params = {}) {
     params.title,
     params.url,
     params.index,
+    params.last,
     specifier,
   ].some((value) => value !== undefined && value !== null && String(value) !== "");
 }
 
-function standardMatches(candidate, params = {}) {
+function standardMatches(candidate, params = {}, position, count) {
   if (params.active === true && !candidate.active) return false;
   const specifier = standardSpecifierValue(params);
   if (
@@ -1358,6 +1359,7 @@ function standardMatches(candidate, params = {}) {
     }
   }
   const fields = standardSpecifierFields(params);
+  if (fields.last === true && position !== count) return false;
   const id = fields.id ?? fields.targetId ?? fields.taskId;
   const name = fields.name ?? fields.title;
   if (id !== undefined && id !== null && String(id) !== "") {
@@ -1400,7 +1402,11 @@ function standardMatches(candidate, params = {}) {
 
 function standardFind(state, params = {}) {
   const candidates = standardCandidates(state, params.kind ?? params.type);
-  return candidates.find((candidate) => standardMatches(candidate, params)) || null;
+  return (
+    candidates.find((candidate, index, values) =>
+      standardMatches(candidate, params, index + 1, values.length),
+    ) || null
+  );
 }
 
 function bookmarkDestinationValue(params = {}) {

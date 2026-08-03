@@ -136,12 +136,37 @@ export function projectAppleScriptResponse(response, projection) {
   if (!response || response.ok !== true || !projection) return response;
 
   if (projection.type === "count") {
+    if (response.result?.count !== undefined) {
+      return {
+        ...response,
+        result: { value: response.result.count },
+      };
+    }
+    const state = response.result?.state || response.result || {};
     return {
       ...response,
-      result: { value: response.result?.count ?? 0 },
+      result: {
+        value: countProjectionValue(state, projection),
+      },
     };
   }
   if (projection.type === "exists") {
+    if (projection.application) {
+      const state = response.result?.state || response.result || {};
+      return {
+        ...response,
+        result: { value: Boolean(state.application) },
+      };
+    }
+    if (projection.selector?.collection || projection.parent) {
+      const state = response.result?.state || response.result || {};
+      return {
+        ...response,
+        result: {
+          value: existsProjectionValue(state, projection),
+        },
+      };
+    }
     return {
       ...response,
       result: { value: Boolean(response.result?.exists) },
@@ -331,6 +356,17 @@ function parseGet(expression) {
 function parseCount(expression) {
   const target = parseSpecifier(expression.replace(/^of\s+/i, ""));
   const kind = target.kind === "application" ? "windows" : target.kind;
+  if (target.kind !== "application" && (target.parent || !target.collection)) {
+    return {
+      request: request("state"),
+      projection: {
+        type: "count",
+        kind,
+        selector: target,
+        parent: target.parent,
+      },
+    };
+  }
   return {
     request: request("standard.count", { kind }),
     projection: { type: "count", kind },
@@ -345,6 +381,17 @@ function parseExists(expression) {
       projection: {
         type: "exists",
         application: true,
+      },
+    };
+  }
+  if (target.parent || target.collection) {
+    return {
+      request: request("state"),
+      projection: {
+        type: "exists",
+        kind: target.kind,
+        selector: target,
+        parent: target.parent,
       },
     };
   }
@@ -641,8 +688,19 @@ function parseMove(expression) {
 
 function parseSpecifier(input) {
   let text = compactWhitespace(String(input || "").trim());
+  const collectionPrefix = /^(?:every|all)\s+/i.test(text);
   text = text.replace(/^(?:the|a|an|every|all)\s+/i, "");
   if (!text) throwAppleScript("EGO_APPLESCRIPT_UNSUPPORTED_OBJECT", "empty object specifier");
+
+  const ordinal = text.match(/^(first|last)\s+(.+)$/i);
+  if (ordinal) {
+    const parsed = parseSpecifier(ordinal[2]);
+    const { active: _active, ...withoutActive } = parsed;
+    return {
+      ...withoutActive,
+      ...(ordinal[1].toLowerCase() === "first" ? { index: 1 } : { last: true }),
+    };
+  }
 
   let parent = null;
   const parentPosition = findPhraseOutsideQuotes(text, " of ");
@@ -679,11 +737,17 @@ function parseSpecifier(input) {
   const kind = collectionKind(kindMatch[1]);
   const selectorText = kindMatch[2].trim();
   if (!selectorText) {
+    if (collectionPrefix) {
+      return withParent({ kind, collection: true }, parent);
+    }
     if (kind === "tabs") return withParent({ kind, active: true }, parent);
     return withParent({ kind, index: 1 }, parent);
   }
   const selector = parseSelector(kind, selectorText);
-  return withParent({ kind, ...selector }, parent);
+  return withParent(
+    { kind, ...selector, ...(collectionPrefix ? { collection: true } : {}) },
+    parent,
+  );
 }
 
 function parseSelector(kind, text) {
@@ -704,10 +768,7 @@ function parseSelector(kind, text) {
   }
   if (/^first$/i.test(text)) return { index: 1 };
   if (/^last$/i.test(text)) {
-    throwAppleScript(
-      "EGO_APPLESCRIPT_UNSUPPORTED_SYNTAX",
-      "last-object specifiers are not supported by the Linux adapter",
-    );
+    return { last: true };
   }
   const literal = parseLiteral(text);
   if (typeof literal === "number") return { index: literal };
@@ -794,27 +855,62 @@ function projectGetValue(state, projection) {
   if (projection.kind === "application") {
     return readProperty(sourceState.application || {}, projection.property);
   }
-  const collection = valuesForKind(sourceState, projection.kind);
+  const collection = collectionValuesForProjection(sourceState, projection);
   if (projection.selector?.collection) {
-    let values = collection;
-    if (projection.parent?.kind === "bookmarkFolders") {
-      const folder = selectValue(sourceState, projection.parent);
-      if (folder) {
-        values = values.filter(
-          (item) =>
-            item.folder === folder.path ||
-            String(item.folderId || item.parentId || "") === String(folder.id),
-        );
-      }
-    }
-    return values;
+    return projection.property
+      ? collection.map((value) => readProperty(value, projection.property))
+      : collection;
   }
   const value =
     projection.selector?.active && projection.kind === "tabs"
-      ? sourceState.tabs?.find((tab) => tab.active) || sourceState.window?.activeTab
-      : selectValue(sourceState, projection.selector);
+      ? collection.find((tab) => tab.active) || sourceState.window?.activeTab
+      : selectValueFromValues(collection, projection.selector);
   if (projection.property === null || projection.property === undefined) return value ?? null;
   return readProperty(value || {}, projection.property);
+}
+
+function countProjectionValue(state, projection) {
+  const values = collectionValuesForProjection(state, projection);
+  if (projection.selector?.collection) return values.length;
+  return existsProjectionValue(state, projection) ? 1 : 0;
+}
+
+function existsProjectionValue(state, projection) {
+  const values = collectionValuesForProjection(state, projection);
+  if (projection.selector?.collection) return values.length > 0;
+  return Boolean(selectValueFromValues(values, projection.selector));
+}
+
+function collectionValuesForProjection(state, projection) {
+  let values = valuesForKind(state, projection.kind);
+  const parent = projection.parent;
+  if (parent && parent.kind !== "application") {
+    const parentValue = selectValue(state, parent);
+    if (!parentValue) return [];
+    if (projection.kind === "tabs" && parent.kind === "windows") {
+      const scope = state.scope ?? null;
+      values = values.filter((tab) => (tab.spaceId ?? null) === scope);
+    } else if (projection.kind === "tabs" && parent.kind === "spaces") {
+      const spaceId = parentValue.id ?? parentValue.taskId;
+      values = values.filter(
+        (tab) => String(tab.spaceId ?? "") === String(spaceId ?? ""),
+      );
+    } else if (
+      projection.kind === "bookmarkItems" &&
+      parent.kind === "bookmarkFolders"
+    ) {
+      values = values.filter(
+        (item) =>
+          item.folder === parentValue.path ||
+          String(item.folderId || item.parentId || "") ===
+            String(parentValue.id),
+      );
+    }
+  }
+  if (!projection.selector?.collection) return values;
+  return values.filter((value, index, candidates) =>
+    matchesSelector(value, projection.selector, index + 1, candidates.length),
+  );
 }
 
 function valuesForKind(state, kind) {
@@ -835,11 +931,19 @@ function flattenFolders(folders, result = []) {
 }
 
 function selectValue(state, selector) {
-  const values = valuesForKind(state, selector.kind);
-  return values.find((value, index) => matchesSelector(value, selector, index + 1)) || null;
+  return selectValueFromValues(valuesForKind(state, selector.kind), selector);
 }
 
-function matchesSelector(value, selector, index) {
+function selectValueFromValues(values, selector) {
+  return (
+    values.find((value, index) =>
+      matchesSelector(value, selector, index + 1, values.length),
+    ) || null
+  );
+}
+
+function matchesSelector(value, selector, index, count) {
+  if (selector.last === true && index !== count) return false;
   if (selector.id !== undefined && String(value.id ?? value.targetId) !== String(selector.id)) return false;
   if (selector.name !== undefined && String(value.name ?? value.title ?? "") !== String(selector.name)) return false;
   if (selector.url !== undefined && String(value.url || "") !== String(selector.url)) return false;
