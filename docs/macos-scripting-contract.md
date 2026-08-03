@@ -32,11 +32,11 @@ commands are `window.set-name`, `window.minimize`, `window.restore`,
 
 | macOS object | Observed properties and elements | Linux JSON status |
 | --- | --- | --- |
-| application | `name`, `frontmost`, `version`; windows; `open`, `print`, `quit` | Window/tab state is exposed through `state`, `window.get`, and `tabs.list`; application-level commands are not yet mapped one-for-one. |
+| application | `name`, `frontmost`, `version`; windows; `open`, `print`, `quit` | `application.open`, `application.print`, and `application.quit` are exposed through the versioned JSON bridge; responses are typed Linux equivalents rather than AppleScript syntax. |
 | window | `given name`, `name`/title, `id`, `index`, `bounds`, `closeable`, `minimizable`, `minimized`, `resizable`, `visible`, `zoomable`, `zoomed`, `active tab`, `mode`, `active tab index`; tabs; `close` | Electron reports the complete listed property set through the JSON window object and supports naming/minimize/restore/maximize controls. Standalone Chromium reports a synthetic window and uses `null` for native-window capability fields. |
 | tab | `id`, `title`, `URL`, `loading` | Exposed in `state` and `tabs.list`, with lifecycle, navigation, edit, save, print, source, and JavaScript actions. |
-| bookmark folder | Nested folders and items; `id`, `title`, `index` | `bookmarkFolders` preserves nested folders and exposes folder add/rename/remove actions in both runtimes. Move/reorder semantics remain. |
-| bookmark item | `id`, `title`, `URL`, `index` | `bookmarkItems` exposes stable ids, titles, URLs, parent folder ids, and child indices; list/add/remove/open/toggle are exposed. Move/reorder semantics remain. |
+| bookmark folder | Nested folders and items; `id`, `title`, `index` | `bookmarkFolders` preserves nested folders and exposes folder add/rename/remove/move/reorder/duplicate actions in both runtimes. |
+| bookmark item | `id`, `title`, `URL`, `index` | `bookmarkItems` exposes stable ids, titles, URLs, parent folder ids, and child indices; list/add/remove/open/toggle/move/reorder/duplicate are exposed. |
 
 ## Tab commands
 
@@ -61,17 +61,19 @@ The inspected tab class responds to the following commands:
 Bookmark folder mutations use `bookmark.folder.add`,
 `bookmark.folder.rename`, and `bookmark.folder.remove`; item mutations accept
 `parentId`/`folderId` for nested insertion and remove by exact item id when
-provided. A future slice will add move/reorder operations so indices can be
-changed after creation.
+provided. `bookmark.move` and `bookmark.reorder` accept a destination folder
+and a 1-based `index`; `standard.move` is the generic command equivalent.
+
+## Standard-suite command equivalents
+
+The generic AppleScript commands are available through typed JSON actions:
+`standard.count`, `standard.exists`, `standard.delete`,
+`standard.duplicate`, `standard.make`, and `standard.move`. They accept a
+`kind` such as `window`, `tab`, `space`, `bookmarkFolder`, or `bookmarkItem`.
+These preserve explicit IDs and indices; AppleScript's implicit object
+specifier coercion is intentionally not reproduced.
 
 Electron delegates save to Chromium's page archive and print to Chromium's PDF
 output. The standalone host supports HTML/DOM serialization and MHTML capture
 through CDP, and writes a PDF directly; it does not reproduce the native macOS
 print dialog or every asset-handling detail of a desktop page save.
-
-## Standard-suite commands still to map
-
-The dictionary also includes generic AppleScript commands such as `count`,
-`delete`, `duplicate`, `exists`, `make`, and `move`, plus application-level
-`open`, `print`, and `quit`. They are separate from the tab command slice and
-remain tracked as future parity work.

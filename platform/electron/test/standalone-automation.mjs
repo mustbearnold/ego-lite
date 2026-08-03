@@ -143,6 +143,21 @@ async function closeChromium() {
   }
 }
 
+async function removeProfileRoot() {
+  let lastError;
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    try {
+      await rm(profileRoot, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!['EBUSY', 'ENOTEMPTY', 'EPERM'].includes(error?.code)) throw error;
+      await sleep(100);
+    }
+  }
+  throw lastError;
+}
+
 try {
   fixtureServer = createServer((_request, response) => {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -191,7 +206,7 @@ try {
   assert.match(await readFile(savedPath, "utf8"), /STANDALONE_AUTOMATION/);
   const printed = await automation({
     version: 1,
-    action: "tab.print",
+    action: "application.print",
     params: { id: tabId, path: printedPath },
   });
   assert.equal(printed.printed, true);
@@ -226,6 +241,35 @@ try {
     },
   });
   assert.equal(nestedBookmark.bookmark.folderId, folderAdded.folder.id);
+  const movableBookmark = await automation({
+    version: 1,
+    action: "bookmark.add",
+    params: {
+      url: `${fixtureUrl}?movable=1`,
+      name: "Standalone movable",
+    },
+  });
+  assert.equal(movableBookmark.added, true);
+  const movedIntoFolder = await automation({
+    version: 1,
+    action: "bookmark.move",
+    params: {
+      id: movableBookmark.bookmark.id,
+      parentId: folderAdded.folder.id,
+      index: 1,
+    },
+  });
+  assert.equal(movedIntoFolder.moved, true);
+  assert.equal(movedIntoFolder.bookmark.parentId, folderAdded.folder.id);
+  assert.equal(movedIntoFolder.bookmark.index, 1);
+  const movedBackToRoot = await automation({
+    version: 1,
+    action: "bookmark.reorder",
+    params: { id: movableBookmark.bookmark.id, parentId: "1", index: 1 },
+  });
+  assert.equal(movedBackToRoot.moved, true);
+  assert.equal(movedBackToRoot.bookmark.parentId, "1");
+  assert.equal(movedBackToRoot.bookmark.index, 1);
   const renamedFolder = await automation({
     version: 1,
     action: "bookmark.folder.rename",
@@ -244,6 +288,101 @@ try {
     params: { id: folderAdded.folder.id },
   });
   assert.equal(removedFolder.removed, 1);
+  const removedMovableBookmark = await automation({
+    version: 1,
+    action: "bookmark.remove",
+    params: { id: movableBookmark.bookmark.id },
+  });
+  assert.equal(removedMovableBookmark.removed, 1);
+
+  const standardTabCount = await automation({
+    version: 1,
+    action: "standard.count",
+    params: { kind: "tabs" },
+  });
+  assert.equal(standardTabCount.kind, "tabs");
+  assert.ok(standardTabCount.count >= 1);
+  const standardWindowExists = await automation({
+    version: 1,
+    action: "standard.exists",
+    params: { kind: "window", id: "main" },
+  });
+  assert.equal(standardWindowExists.exists, true);
+  const standardOpened = await automation({
+    version: 1,
+    action: "application.open",
+    params: { url: `${fixtureUrl}?standard-open=1` },
+  });
+  assert.equal(standardOpened.opened, true);
+  const standardDuplicate = await automation({
+    version: 1,
+    action: "standard.duplicate",
+    params: { kind: "tab", id: standardOpened.tab.targetId },
+  });
+  assert.equal(standardDuplicate.duplicated, true);
+  await automation({
+    version: 1,
+    action: "standard.delete",
+    params: { kind: "tab", id: standardDuplicate.tab.targetId },
+  });
+  await automation({
+    version: 1,
+    action: "standard.delete",
+    params: { kind: "tab", id: standardOpened.tab.targetId },
+  });
+  const standardFolder = await automation({
+    version: 1,
+    action: "standard.make",
+    params: { kind: "bookmarkFolder", title: "Standalone standard folder" },
+  });
+  const standardItem = await automation({
+    version: 1,
+    action: "standard.make",
+    params: {
+      kind: "bookmarkItem",
+      url: `${fixtureUrl}?standard-item=1`,
+      name: "Standalone standard item",
+    },
+  });
+  const standardMoved = await automation({
+    version: 1,
+    action: "standard.move",
+    params: {
+      kind: "bookmarkItem",
+      id: standardItem.bookmark.id,
+      parentId: standardFolder.folder.id,
+      index: 1,
+    },
+  });
+  assert.equal(standardMoved.bookmark.parentId, standardFolder.folder.id);
+  const standardExistsItem = await automation({
+    version: 1,
+    action: "standard.exists",
+    params: { kind: "bookmarkItem", id: standardItem.bookmark.id },
+  });
+  assert.equal(standardExistsItem.exists, true);
+  const standardDuplicateItem = await automation({
+    version: 1,
+    action: "standard.duplicate",
+    params: { kind: "bookmarkItem", id: standardItem.bookmark.id },
+  });
+  assert.equal(standardDuplicateItem.duplicated, true);
+  await automation({
+    version: 1,
+    action: "standard.delete",
+    params: { kind: "bookmarkItem", id: standardDuplicateItem.bookmark.id },
+  });
+  await automation({
+    version: 1,
+    action: "standard.delete",
+    params: { kind: "bookmarkItem", id: standardItem.bookmark.id },
+  });
+  const standardDeletedFolder = await automation({
+    version: 1,
+    action: "standard.delete",
+    params: { kind: "bookmarkFolder", id: standardFolder.folder.id },
+  });
+  assert.equal(standardDeletedFolder.deleted, true);
 
   const added = await automation({
     version: 1,
@@ -251,7 +390,7 @@ try {
     params: { url: fixtureUrl, name: "Standalone fixture" },
   });
   assert.equal(added.added, true);
-  const bookmark = added.bookmarks[0];
+  const bookmark = added.bookmark;
   const opened = await automation({
     version: 1,
     action: "bookmark.open",
@@ -270,6 +409,13 @@ try {
   assert.equal(removed.removed, 1);
   await automation({ version: 1, action: "tab.close", params: { id: tabId } });
 
+  const unsupportedQuit = await runAutomation({
+    version: 1,
+    action: "application.quit",
+  });
+  assert.equal(unsupportedQuit.exitCode, 1);
+  assert.equal(unsupportedQuit.response.error.code, "EGO_AUTOMATION_UNSUPPORTED");
+
   const invalid = await runAutomation({ version: 1, action: "not-real" });
   assert.equal(invalid.exitCode, 1);
   assert.equal(invalid.response.error.code, "EGO_AUTOMATION_UNKNOWN_ACTION");
@@ -278,5 +424,5 @@ try {
 } finally {
   await closeChromium().catch(() => {});
   fixtureServer?.close();
-  await rm(profileRoot, { recursive: true, force: true });
+  await removeProfileRoot();
 }

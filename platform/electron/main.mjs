@@ -30,6 +30,8 @@ import {
 import {
   addBookmarkFolderToDocument,
   addBookmarkToDocument,
+  duplicateBookmarkNodeInDocument,
+  moveBookmarkNodeInDocument,
   readBookmarks,
   readBookmarksDocument,
   readBookmarkModel,
@@ -1010,6 +1012,15 @@ function managedTabState() {
 const AUTOMATION_VERSION = 1;
 const AUTOMATION_ACTIONS = new Set([
   "state",
+  "application.open",
+  "application.print",
+  "application.quit",
+  "standard.count",
+  "standard.exists",
+  "standard.delete",
+  "standard.duplicate",
+  "standard.make",
+  "standard.move",
   "window.get",
   "window.focus",
   "window.fullscreen",
@@ -1043,6 +1054,8 @@ const AUTOMATION_ACTIONS = new Set([
   "bookmark.folder.add",
   "bookmark.folder.rename",
   "bookmark.folder.remove",
+  "bookmark.move",
+  "bookmark.reorder",
   "bookmark.add",
   "bookmark.remove",
   "bookmark.open",
@@ -1205,6 +1218,77 @@ function automationBookmarkState() {
   };
 }
 
+function flattenAutomationFolders(folders, result = []) {
+  for (const folder of folders || []) {
+    result.push(folder);
+    flattenAutomationFolders(folder.folders, result);
+  }
+  return result;
+}
+
+function standardKind(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]/g, "");
+  if (["application", "window", "windows"].includes(normalized)) return "windows";
+  if (["tab", "tabs"].includes(normalized)) return "tabs";
+  if (["space", "spaces", "taskspace", "taskspaces"].includes(normalized)) {
+    return "spaces";
+  }
+  if (["bookmark", "bookmarks", "bookmarkitem", "bookmarkitems", "item", "items"].includes(normalized)) {
+    return "bookmarkItems";
+  }
+  if (["folder", "folders", "bookmarkfolder", "bookmarkfolders"].includes(normalized)) {
+    return "bookmarkFolders";
+  }
+  throw new Error(`unsupported standard object kind: ${String(value || "")}`);
+}
+
+function standardCandidates(state, kindValue) {
+  const kind = standardKind(kindValue);
+  switch (kind) {
+    case "windows":
+      return [{ ...state.window }];
+    case "tabs":
+      return state.tabs || [];
+    case "spaces":
+      return state.taskSpaces || [];
+    case "bookmarkItems":
+      return state.bookmarkItems || [];
+    case "bookmarkFolders":
+      return flattenAutomationFolders(state.bookmarkFolders);
+    default:
+      return [];
+  }
+}
+
+function standardMatches(candidate, params = {}) {
+  const id = params.id ?? params.targetId;
+  const name = params.name ?? params.title;
+  if (id !== undefined && id !== null && String(id) !== "") {
+    const candidateId = candidate.id ?? candidate.targetId;
+    if (String(candidateId ?? "") !== String(id)) return false;
+  }
+  if (params.url !== undefined && String(candidate.url || "") !== String(params.url)) {
+    return false;
+  }
+  if (name !== undefined) {
+    const candidateName = candidate.name ?? candidate.title ?? "";
+    if (String(candidateName) !== String(name)) return false;
+  }
+  if (params.index !== undefined) {
+    const index = Number(params.index);
+    if (!Number.isInteger(index) || candidate.index !== index) return false;
+  }
+  return true;
+}
+
+function standardFind(state, params = {}) {
+  const candidates = standardCandidates(state, params.kind ?? params.type);
+  return candidates.find((candidate) => standardMatches(candidate, params)) || null;
+}
+
 function automationOutputPath(value, environmentVariable, message) {
   const requested = String(value || "").trim();
   const configured = requested
@@ -1316,6 +1400,266 @@ async function handleAutomationRequest(body) {
   }
   const params = body.params || {};
   try {
+    if (body.action === "application.open") {
+      const requestedUrl = params.url ?? params.target;
+      if (!requestedUrl) throw new Error("application.open requires params.url");
+      const spaceId = automationSpaceId(params.spaceId);
+      const url = normalizeUrl(requestedUrl);
+      let created;
+      if (spaceId === null) {
+        created = await createPrimaryBrowserView({
+          url,
+          privateMode: Boolean(params.private ?? params.privateMode),
+        });
+      } else {
+        const space = readTaskSpaceState().spaces.find(
+          (candidate) => Number(candidate.id) === spaceId,
+        );
+        if (!space) throw new Error(`task Space not found: ${spaceId}`);
+        created = await createManagedView({
+          spaceId,
+          spaceName: params.spaceName || space.name || null,
+          url,
+        });
+      }
+      const managed = managedViews.get(created.targetId);
+      if (managed && params.activate !== false) setActiveBrowserView(managed.view);
+      return automationSuccess({
+        opened: true,
+        tab: automationState().tabs.find((tab) => tab.id === created.targetId) || null,
+        state: automationState(),
+      });
+    }
+    if (body.action === "application.print") {
+      return automationSuccess({
+        ...(await handleElectronTabCommand(
+          automationTarget(params),
+          "tab.print",
+          params,
+        )),
+        application: true,
+      });
+    }
+    if (body.action === "application.quit") {
+      setImmediate(() => app.quit());
+      return automationSuccess({ quitting: true });
+    }
+    if (body.action === "standard.count") {
+      const state = automationState();
+      const kind = standardKind(params.kind ?? params.type);
+      return automationSuccess({ kind, count: standardCandidates(state, kind).length });
+    }
+    if (body.action === "standard.exists") {
+      const state = automationState();
+      const kind = standardKind(params.kind ?? params.type);
+      const object = standardFind(state, { ...params, kind });
+      return automationSuccess({ kind, exists: Boolean(object), object });
+    }
+    if (body.action === "standard.delete") {
+      const state = automationState();
+      const kind = standardKind(params.kind ?? params.type);
+      if (kind === "tabs") {
+        const target = automationTarget(params);
+        const result = await closeManagedView(target.targetId);
+        return automationSuccess({ deleted: result.closed, kind, state: automationState() });
+      }
+      if (kind === "windows") {
+        setImmediate(() => app.quit());
+        return automationSuccess({ deleted: true, kind, quitting: true });
+      }
+      if (kind === "bookmarkItems") {
+        const item = standardFind(state, { ...params, kind });
+        if (!item) throw new Error("standard.delete bookmark item not found");
+        const result = removeBookmarkItemFromDocument(
+          readBookmarkStoreDocument(),
+          { id: item.id, url: item.url },
+        );
+        if (!result.removed) throw new Error("standard.delete bookmark item failed");
+        writeBookmarksDocument(result.document);
+        bookmarks = readBookmarks(BOOKMARKS_STATE_PATH);
+        const nextState = automationState();
+        return automationSuccess({
+          deleted: true,
+          kind,
+          state: nextState,
+          bookmarkItems: nextState.bookmarkItems,
+          bookmarkFolders: nextState.bookmarkFolders,
+        });
+      }
+      if (kind === "bookmarkFolders") {
+        const folder = standardFind(state, { ...params, kind });
+        if (!folder) throw new Error("standard.delete bookmark folder not found");
+        const result = removeBookmarkFolderFromDocument(
+          readBookmarkStoreDocument(),
+          folder.id,
+        );
+        if (!result.removed) throw new Error("standard.delete bookmark folder failed");
+        writeBookmarksDocument(result.document);
+        bookmarks = readBookmarks(BOOKMARKS_STATE_PATH);
+        const nextState = automationState();
+        return automationSuccess({
+          deleted: true,
+          kind,
+          state: nextState,
+          bookmarkItems: nextState.bookmarkItems,
+          bookmarkFolders: nextState.bookmarkFolders,
+        });
+      }
+      throw new Error(`standard.delete does not support ${kind}`);
+    }
+    if (body.action === "standard.duplicate") {
+      const state = automationState();
+      const kind = standardKind(params.kind ?? params.type);
+      if (kind === "tabs") {
+        const target = automationTarget(params);
+        const url = target.managed.view.webContents.getURL() || "about:blank";
+        let created;
+        if (target.managed.spaceId === null) {
+          created = await createPrimaryBrowserView({
+            url,
+            tabGroup: target.managed.tabGroup,
+            privateMode: target.managed.private,
+          });
+        } else {
+          created = await createManagedView({
+            spaceId: target.managed.spaceId,
+            spaceName: target.managed.spaceName,
+            url,
+          });
+        }
+        const managed = managedViews.get(created.targetId);
+        if (managed && params.activate !== false) setActiveBrowserView(managed.view);
+        return automationSuccess({
+          duplicated: true,
+          kind,
+          tab: automationState().tabs.find((tab) => tab.id === created.targetId) || null,
+          state: automationState(),
+        });
+      }
+      if (kind === "bookmarkItems" || kind === "bookmarkFolders") {
+        const object = standardFind(state, { ...params, kind });
+        if (!object) throw new Error("standard.duplicate bookmark object not found");
+        const result = duplicateBookmarkNodeInDocument(readBookmarkStoreDocument(), {
+          id: object.id,
+        });
+        if (!result.duplicated) throw new Error("standard.duplicate bookmark object failed");
+        writeBookmarksDocument(result.document);
+        bookmarks = readBookmarks(BOOKMARKS_STATE_PATH);
+        const nextState = automationState();
+        return automationSuccess({
+          duplicated: true,
+          kind,
+          bookmark: result.bookmark,
+          folder: result.folder,
+          state: nextState,
+          bookmarkItems: nextState.bookmarkItems,
+          bookmarkFolders: nextState.bookmarkFolders,
+        });
+      }
+      throw new Error(`standard.duplicate does not support ${kind}`);
+    }
+    if (body.action === "standard.make") {
+      const kind = standardKind(params.kind ?? params.type);
+      if (kind === "tabs") {
+        const requestedUrl = params.url ?? params.target ?? "about:blank";
+        const spaceId = automationSpaceId(params.spaceId);
+        let created;
+        if (spaceId === null) {
+          created = await createPrimaryBrowserView({
+            url: normalizeUrl(requestedUrl),
+            privateMode: Boolean(params.private ?? params.privateMode),
+          });
+        } else {
+          const space = readTaskSpaceState().spaces.find(
+            (candidate) => Number(candidate.id) === spaceId,
+          );
+          if (!space) throw new Error(`task Space not found: ${spaceId}`);
+          if (params.private || params.privateMode) {
+            throw new Error("private tabs are only available in the primary window scope");
+          }
+          created = await createManagedView({
+            spaceId,
+            spaceName: params.spaceName || space.name || null,
+            url: normalizeUrl(requestedUrl),
+          });
+        }
+        const managed = managedViews.get(created.targetId);
+        if (managed && params.activate !== false) setActiveBrowserView(managed.view);
+        return automationSuccess({
+          made: true,
+          kind,
+          tab: automationState().tabs.find((tab) => tab.id === created.targetId) || null,
+          state: automationState(),
+        });
+      }
+      if (kind === "bookmarkFolders") {
+        const result = addBookmarkFolderToDocument(readBookmarkStoreDocument(), {
+          title: params.title ?? params.name,
+          parentId: params.parentId ?? params.folderId ?? "1",
+        });
+        if (!result.added) throw new Error("standard.make bookmark folder failed");
+        writeBookmarksDocument(result.document);
+        bookmarks = readBookmarks(BOOKMARKS_STATE_PATH);
+        const nextState = automationState();
+        return automationSuccess({
+          made: true,
+          kind,
+          folder: result.folder,
+          state: nextState,
+          bookmarkFolders: nextState.bookmarkFolders,
+        });
+      }
+      if (kind === "bookmarkItems") {
+        const url = automationBookmarkUrl(params.url);
+        if (!url) throw new Error("standard.make bookmark item requires params.url");
+        const result = addBookmarkToDocument(readBookmarkStoreDocument(), {
+          url,
+          name: params.name ?? params.title ?? url,
+          parentId: params.parentId ?? params.folderId ?? "1",
+        });
+        if (!result.added) throw new Error("standard.make bookmark item failed");
+        writeBookmarksDocument(result.document);
+        bookmarks = readBookmarks(BOOKMARKS_STATE_PATH);
+        const nextState = automationState();
+        return automationSuccess({
+          made: true,
+          kind,
+          bookmark: result.bookmark,
+          state: nextState,
+          bookmarkItems: nextState.bookmarkItems,
+          bookmarkFolders: nextState.bookmarkFolders,
+        });
+      }
+      throw new Error(`standard.make does not support ${kind}`);
+    }
+    if (body.action === "standard.move") {
+      const kind = standardKind(params.kind ?? params.type ?? "bookmarkItems");
+      if (kind !== "bookmarkItems" && kind !== "bookmarkFolders") {
+        throw new Error(`standard.move does not support ${kind}`);
+      }
+      const id = params.id ?? params.targetId;
+      if (id === undefined) throw new Error("standard.move requires params.id");
+      const result = moveBookmarkNodeInDocument(readBookmarkStoreDocument(), {
+        id,
+        parentId: params.parentId ?? params.destinationFolderId ?? "1",
+        index: params.index,
+      });
+      if (!result.moved) throw new Error("standard.move bookmark object failed");
+      writeBookmarksDocument(result.document);
+      bookmarks = readBookmarks(BOOKMARKS_STATE_PATH);
+      const nextState = automationState();
+      return automationSuccess({
+        moved: true,
+        kind,
+        parentId: result.parentId,
+        index: result.index,
+        bookmark: result.bookmark,
+        folder: result.folder,
+        state: nextState,
+        bookmarkItems: nextState.bookmarkItems,
+        bookmarkFolders: nextState.bookmarkFolders,
+      });
+    }
     if (body.action === "state") return automationSuccess(automationState());
     if (body.action === "window.get") {
       const state = automationState();
@@ -1555,6 +1899,32 @@ async function handleAutomationRequest(body) {
       return automationSuccess({
         removed: result.removed,
         bookmarks: state.bookmarks,
+        bookmarkFolders: state.bookmarkFolders,
+      });
+    }
+    if (body.action === "bookmark.move" || body.action === "bookmark.reorder") {
+      const id = params.id ?? params.bookmarkId ?? params.folderId;
+      if (id === undefined) {
+        throw new Error(`${body.action} requires params.id`);
+      }
+      const document = readBookmarkStoreDocument();
+      const result = moveBookmarkNodeInDocument(document, {
+        id,
+        parentId: params.parentId ?? params.destinationFolderId ?? "1",
+        index: params.index,
+      });
+      if (!result.moved) throw new Error("bookmark node cannot be moved");
+      writeBookmarksDocument(result.document);
+      bookmarks = readBookmarks(BOOKMARKS_STATE_PATH);
+      publishBrowserState();
+      const state = automationState();
+      return automationSuccess({
+        moved: true,
+        parentId: result.parentId,
+        index: result.index,
+        bookmark: result.bookmark,
+        folder: result.folder,
+        bookmarkItems: state.bookmarkItems,
         bookmarkFolders: state.bookmarkFolders,
       });
     }

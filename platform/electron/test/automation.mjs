@@ -235,6 +235,100 @@ try {
     JSON.parse(await readFile(join(profileDir, "ego-lite-window.json"))).givenName,
     "Automation Window",
   );
+  const standardTabCount = await automation({
+    version: 1,
+    action: "standard.count",
+    params: { kind: "tabs" },
+  });
+  assert.equal(standardTabCount.kind, "tabs");
+  assert.equal(standardTabCount.count, 1);
+  const standardWindowExists = await automation({
+    version: 1,
+    action: "standard.exists",
+    params: { kind: "window", id: "main" },
+  });
+  assert.equal(standardWindowExists.exists, true);
+  const standardOpened = await automation({
+    version: 1,
+    action: "application.open",
+    params: { url: twoUrl },
+  });
+  assert.equal(standardOpened.opened, true);
+  const standardDuplicate = await automation({
+    version: 1,
+    action: "standard.duplicate",
+    params: { kind: "tab", id: standardOpened.tab.id },
+  });
+  assert.equal(standardDuplicate.duplicated, true);
+  const standardDeletedDuplicate = await automation({
+    version: 1,
+    action: "standard.delete",
+    params: { kind: "tab", id: standardDuplicate.tab.id },
+  });
+  assert.equal(standardDeletedDuplicate.deleted, true);
+  const standardDeletedOpened = await automation({
+    version: 1,
+    action: "standard.delete",
+    params: { kind: "tab", id: standardOpened.tab.id },
+  });
+  assert.equal(standardDeletedOpened.deleted, true);
+  const standardFolder = await automation({
+    version: 1,
+    action: "standard.make",
+    params: { kind: "bookmarkFolder", title: "Standard Folder" },
+  });
+  assert.equal(standardFolder.made, true);
+  const standardItem = await automation({
+    version: 1,
+    action: "standard.make",
+    params: {
+      kind: "bookmarkItem",
+      url: `${oneUrl}?standard=1`,
+      name: "Standard Item",
+    },
+  });
+  assert.equal(standardItem.made, true);
+  const standardMoved = await automation({
+    version: 1,
+    action: "standard.move",
+    params: {
+      kind: "bookmarkItem",
+      id: standardItem.bookmark.id,
+      parentId: standardFolder.folder.id,
+      index: 1,
+    },
+  });
+  assert.equal(standardMoved.moved, true);
+  assert.equal(standardMoved.bookmark.parentId, standardFolder.folder.id);
+  const standardExistsItem = await automation({
+    version: 1,
+    action: "standard.exists",
+    params: { kind: "bookmarkItem", id: standardItem.bookmark.id },
+  });
+  assert.equal(standardExistsItem.exists, true);
+  const standardDuplicateItem = await automation({
+    version: 1,
+    action: "standard.duplicate",
+    params: { kind: "bookmarkItem", id: standardItem.bookmark.id },
+  });
+  assert.equal(standardDuplicateItem.duplicated, true);
+  assert.notEqual(standardDuplicateItem.bookmark.id, standardItem.bookmark.id);
+  await automation({
+    version: 1,
+    action: "standard.delete",
+    params: { kind: "bookmarkItem", id: standardDuplicateItem.bookmark.id },
+  });
+  await automation({
+    version: 1,
+    action: "standard.delete",
+    params: { kind: "bookmarkItem", id: standardItem.bookmark.id },
+  });
+  const standardDeletedFolder = await automation({
+    version: 1,
+    action: "standard.delete",
+    params: { kind: "bookmarkFolder", id: standardFolder.folder.id },
+  });
+  assert.equal(standardDeletedFolder.deleted, true);
   const minimizedWindow = await automation({
     version: 1,
     action: "window.minimize",
@@ -325,7 +419,7 @@ try {
   assert.match(await readFile(savedPath, "utf8"), /AUTOMATION_TWO/);
   const printed = await automation({
     version: 1,
-    action: "tab.print",
+    action: "application.print",
     params: { id: primaryTab.id, path: printedPath },
   });
   assert.equal(printed.printed, true);
@@ -397,6 +491,32 @@ try {
   });
   assert.equal(nestedBookmark.bookmark.folderId, folderAdded.folder.id);
   assert.equal(nestedBookmark.bookmark.folder, "Bookmarks bar / Automation Folder");
+  const movableBookmark = await automation({
+    version: 1,
+    action: "bookmark.add",
+    params: { url: twoUrl, name: "Movable Automation Bookmark" },
+  });
+  assert.equal(movableBookmark.added, true);
+  const movedIntoFolder = await automation({
+    version: 1,
+    action: "bookmark.move",
+    params: {
+      id: movableBookmark.bookmark.id,
+      parentId: folderAdded.folder.id,
+      index: 1,
+    },
+  });
+  assert.equal(movedIntoFolder.moved, true);
+  assert.equal(movedIntoFolder.bookmark.parentId, folderAdded.folder.id);
+  assert.equal(movedIntoFolder.bookmark.index, 1);
+  const movedBackToRoot = await automation({
+    version: 1,
+    action: "bookmark.reorder",
+    params: { id: movableBookmark.bookmark.id, parentId: "1", index: 1 },
+  });
+  assert.equal(movedBackToRoot.moved, true);
+  assert.equal(movedBackToRoot.bookmark.parentId, "1");
+  assert.equal(movedBackToRoot.bookmark.index, 1);
   const renamedFolder = await automation({
     version: 1,
     action: "bookmark.folder.rename",
@@ -421,6 +541,12 @@ try {
     params: { id: folderAdded.folder.id },
   });
   assert.equal(removedFolder.removed, 1);
+  const removedMovableBookmark = await automation({
+    version: 1,
+    action: "bookmark.remove",
+    params: { id: movableBookmark.bookmark.id },
+  });
+  assert.equal(removedMovableBookmark.removed, 1);
 
   const added = await automation({
     version: 1,
@@ -428,8 +554,8 @@ try {
     params: { url: oneUrl, name: "Automation One" },
   });
   assert.equal(added.added, true);
-  assert.equal(added.bookmarks[0].name, "Automation One");
-  const bookmark = added.bookmarks[0];
+  assert.equal(added.bookmark.name, "Automation One");
+  const bookmark = added.bookmark;
   const opened = await automation({
     version: 1,
     action: "bookmark.open",
@@ -459,6 +585,11 @@ try {
   assert.equal(invalid.exitCode, 1);
   assert.equal(invalid.response.ok, false);
   assert.equal(invalid.response.error.code, "EGO_AUTOMATION_UNSUPPORTED_VERSION");
+  const quitting = await automation({ version: 1, action: "application.quit" });
+  assert.equal(quitting.quitting, true);
+  await waitFor("application quit", async () =>
+    electron.child.exitCode !== null || electron.child.signalCode !== null,
+  );
 
   console.log("automation contract: passed");
 } finally {

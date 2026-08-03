@@ -217,11 +217,13 @@ Opening URLs and files:
 Automation:
   --automation reads one versioned JSON request from stdin and writes one JSON
   response to stdout. Requests use {"version":1,"action":"state","params":{}}.
-  Supported actions include state, window.get, tabs.list, spaces.list,
+  Supported actions include state, application.open/print/quit,
+  standard.count/exists/delete/duplicate/make/move, window.get, tabs.list, spaces.list,
   tab.create/activate/close/navigate/back/forward/reload/stop/mute,
   tab.undo/redo/cut/copy/paste/select-all/execute/save/print/view-source,
   window.set-name/minimize/restore/maximize/unmaximize, and bookmarks.list
-  plus bookmark.folder.add/rename/remove and bookmark.add/remove/open/toggle.
+  plus bookmark.folder.add/rename/remove/move/reorder and
+  bookmark.add/remove/open/toggle.
 
 Migration:
   --migrate-profile imports bookmarks, browser settings, extensions, local

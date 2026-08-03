@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   addBookmarkFolderToDocument,
   addBookmarkToDocument,
+  moveBookmarkNodeInDocument,
   parseBookmarkModel,
   parseBookmarksDocument,
   removeBookmarkFolderFromDocument,
@@ -147,7 +148,23 @@ const nestedBookmark = addBookmarkToDocument(folderAdded.document, {
 assert.equal(nestedBookmark.added, true);
 assert.equal(nestedBookmark.bookmark.folderId, folderId);
 assert.equal(nestedBookmark.bookmark.folder, "Bookmarks bar / Projects");
-const renamedFolder = renameBookmarkFolderInDocument(nestedBookmark.document, {
+const movedIntoFolder = moveBookmarkNodeInDocument(nestedBookmark.document, {
+  id: added.bookmark.id,
+  parentId: folderId,
+  index: 1,
+});
+assert.equal(movedIntoFolder.moved, true);
+assert.equal(movedIntoFolder.bookmark.parentId, folderId);
+assert.equal(movedIntoFolder.bookmark.index, 1);
+const movedBackToRoot = moveBookmarkNodeInDocument(movedIntoFolder.document, {
+  id: added.bookmark.id,
+  parentId: "1",
+  index: 1,
+});
+assert.equal(movedBackToRoot.moved, true);
+assert.equal(movedBackToRoot.bookmark.parentId, "1");
+assert.equal(movedBackToRoot.bookmark.index, 1);
+const renamedFolder = renameBookmarkFolderInDocument(movedBackToRoot.document, {
   id: folderId,
   title: "Renamed projects",
 });

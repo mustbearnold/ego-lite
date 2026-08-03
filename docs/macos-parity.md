@@ -29,17 +29,15 @@ similar-looking toolbar as proof of parity.
 | Window/tab properties exposed to automation | Implemented with standalone limits | Electron now reports the macOS-shaped window name/given name, index, bounds, close/minimize/resize/zoom capability flags, minimized/zoomed/visible state, active tab/index, mode, and the existing tab model. Standalone Chromium reports the same fields where meaningful and `null` for native-window capabilities. AppleScript syntax and specifier semantics remain gaps. |
 | Back, forward, reload, stop, save, print, view source, and execute JavaScript | Implemented with output differences | The authenticated bridge and CLI now cover navigation, editing, JavaScript execution, save, print-to-PDF, and view-source actions. Electron delegates page saves to Chromium; standalone CDP saves serialize HTML or capture MHTML. Native macOS print-dialog behavior and all save-format details are not identical. |
 | Bookmark folders and bookmark items are scriptable | Implemented with command gaps | `bookmarks.list` now preserves nested folder trees, folder ids/titles/indices, item parent folders, item titles/URLs/indices, and the legacy flat list. Folder add/rename/remove and exact-id item mutations work in both runtimes; an ego-owned bookmark store survives Chromium profile shutdown; generic AppleScript move/specifier commands remain gaps. |
-| AppleScript application/window/tab/bookmark automation | Partial Linux equivalent | Linux exposes the shared observable boundary through authenticated HTTP bridge calls and a one-shot versioned JSON CLI. AppleScript itself, generic standard-suite commands, and full object/specifier semantics remain macOS-only or unfinished. |
+| AppleScript application/window/tab/bookmark automation | Implemented as typed Linux equivalent | Linux now exposes application open/print/quit plus typed count/exists/delete/duplicate/make/move actions through the authenticated HTTP bridge and one-shot JSON CLI. AppleScript syntax, generic specifier coercion, and native macOS print-dialog semantics remain platform-specific. |
 | Migration, extensions, private tabs, downloads, history, reading list, sync, profiles, fullscreen, find, devtools, and updates | Implemented or intentionally Linux-specific | See `platform/electron/README.md` for the detached probe attached to each feature. |
 
 ## Next parity slices
 
-1. Map the remaining macOS application and standard-suite commands (`open`,
-   `print`, `quit`, `count`, `exists`, `make`, `move`, and related specifiers)
-   onto the Linux JSON contract.
-2. Add bookmark move/reorder semantics and test index updates after mutation.
-3. Close remaining snapshot wording and interaction differences against a
+1. Close remaining snapshot wording and interaction differences against a
    captured macOS contract corpus.
+2. Add richer object specifier coercion and tab/Space move semantics where
+   Linux has an equivalent target.
 
 The matrix is deliberately maintained alongside implementation commits so a
 passing Linux test cannot be mistaken for complete macOS parity.

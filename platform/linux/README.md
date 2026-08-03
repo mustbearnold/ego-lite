@@ -45,11 +45,15 @@ printf '%s\n' '{"version":1,"action":"tab.create","params":{"url":"https://examp
 ```
 
 Responses always contain `version: 1` and `ok`; failures use a stable
-`error.code`. Supported actions cover window and Space inspection, tab creation,
+`error.code`. Supported actions cover typed standard-suite equivalents
+(`application.open`, `application.print`, `application.quit`, and
+`standard.count`, `standard.exists`, `standard.delete`, `standard.duplicate`,
+`standard.make`, and `standard.move`), window and Space inspection, tab creation,
 activation, closing, navigation, reload/stop, muting, editing
 (`tab.undo`, `tab.redo`, `tab.cut`, `tab.copy`, `tab.paste`, and
 `tab.select-all`), JavaScript execution, page save, PDF print, view source, and
-bookmark list/add/remove/open/toggle plus nested folder add/rename/remove.
+bookmark list/add/remove/open/toggle plus nested folder add/rename/remove and
+move/reorder.
 Window state includes macOS-shaped name, bounds, capability, active-tab, and
 mode fields; bookmark mutations are mirrored to an ego-owned profile store so
 they survive Chromium shutdown; native window mutations remain Electron-only.

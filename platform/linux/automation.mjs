@@ -6,6 +6,15 @@ export const AUTOMATION_VERSION = 1;
 
 const AUTOMATION_ACTIONS = new Set([
   "state",
+  "application.open",
+  "application.print",
+  "application.quit",
+  "standard.count",
+  "standard.exists",
+  "standard.delete",
+  "standard.duplicate",
+  "standard.make",
+  "standard.move",
   "window.get",
   "window.focus",
   "window.fullscreen",
@@ -39,6 +48,8 @@ const AUTOMATION_ACTIONS = new Set([
   "bookmark.folder.add",
   "bookmark.folder.rename",
   "bookmark.folder.remove",
+  "bookmark.move",
+  "bookmark.reorder",
   "bookmark.add",
   "bookmark.remove",
   "bookmark.open",
@@ -304,6 +315,99 @@ function findStandaloneBookmarkFolder(document, folderId) {
   return null;
 }
 
+function findStandaloneBookmarkNode(document, nodeId) {
+  const requestedId = String(nodeId || "");
+  if (!requestedId) return null;
+  function visit(node, parent = null, index = null) {
+    if (!node || typeof node !== "object") return null;
+    if (String(node.id || "") === requestedId) return { node, parent, index };
+    for (const [childIndex, child] of (node.children || []).entries()) {
+      const found = visit(child, node, childIndex);
+      if (found) return found;
+    }
+    return null;
+  }
+  for (const root of Object.values(document?.roots || {})) {
+    const found = visit(root);
+    if (found) return found;
+  }
+  return null;
+}
+
+function containsStandaloneBookmarkNode(parent, candidate) {
+  if (!parent || !candidate) return false;
+  if (parent === candidate) return true;
+  return (parent.children || []).some((child) =>
+    containsStandaloneBookmarkNode(child, candidate),
+  );
+}
+
+function moveBookmarkNode(document, { id, parentId = "1", index } = {}) {
+  const next = ensureBookmarkBar(document);
+  const source = findStandaloneBookmarkNode(next, id);
+  const destination = findStandaloneBookmarkFolder(next, parentId || "1");
+  if (
+    !source ||
+    !source.parent ||
+    source.index === null ||
+    !destination ||
+    containsStandaloneBookmarkNode(source.node, destination)
+  ) {
+    return { document: next, moved: false };
+  }
+  destination.children ||= [];
+  source.parent.children.splice(source.index, 1);
+  const requestedIndex = Number(index);
+  const oneBasedIndex = Number.isInteger(requestedIndex)
+    ? requestedIndex
+    : destination.children.length + 1;
+  const insertionIndex = Math.max(
+    0,
+    Math.min(destination.children.length, oneBasedIndex - 1),
+  );
+  destination.children.splice(insertionIndex, 0, source.node);
+  const model = standaloneBookmarkModel(next);
+  return {
+    document: next,
+    moved: true,
+    parentId: String(destination.id),
+    index: insertionIndex + 1,
+    bookmark:
+      model.bookmarks.find((candidate) => candidate.id === String(id)) || null,
+    folder: model.folders.find((candidate) => candidate.id === String(id)) || null,
+  };
+}
+
+function duplicateBookmarkNode(document, { id } = {}) {
+  const next = ensureBookmarkBar(document);
+  const source = findStandaloneBookmarkNode(next, id);
+  if (!source || !source.parent || source.index === null) {
+    return { document: next, duplicated: false };
+  }
+  let nextId = Number(nextBookmarkId(next));
+  const duplicate = JSON.parse(JSON.stringify(source.node));
+  function refreshIds(node) {
+    node.id = String(nextId++);
+    if (node.guid) node.guid = randomUUID();
+    for (const child of node.children || []) refreshIds(child);
+  }
+  refreshIds(duplicate);
+  source.parent.children.splice(source.index + 1, 0, duplicate);
+  const model = standaloneBookmarkModel(next);
+  return {
+    document: next,
+    duplicated: true,
+    parentId: String(source.parent.id),
+    index: source.index + 2,
+    bookmark:
+      model.bookmarks.find((candidate) => candidate.id === String(duplicate.id)) ||
+      null,
+    folder:
+      model.folders.find((candidate) => candidate.id === String(duplicate.id)) ||
+      null,
+  };
+}
+
 function addBookmark(document, { url, name, parentId = "1" }) {
   const canonical = validBookmarkUrl(url);
   const title = String(name || "").trim().slice(0, 160);
@@ -349,7 +453,8 @@ function removeBookmarkItem(document, { id, url } = {}) {
     if (!Array.isArray(node?.children)) return;
     node.children = node.children.filter((child) => {
       const matchesId = requestedId && String(child?.id || "") === requestedId;
-      const matchesUrl = canonical && validBookmarkUrl(child.url) === canonical;
+      const matchesUrl =
+        !requestedId && canonical && validBookmarkUrl(child.url) === canonical;
       if (child?.type === "url" && (matchesId || matchesUrl)) {
         removed += 1;
         return false;
@@ -703,6 +808,77 @@ async function standaloneState(host) {
   };
 }
 
+function flattenStandaloneBookmarkFolders(folders, result = []) {
+  for (const folder of folders || []) {
+    result.push(folder);
+    flattenStandaloneBookmarkFolders(folder.folders, result);
+  }
+  return result;
+}
+
+function standardKind(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]/g, "");
+  if (["application", "window", "windows"].includes(normalized)) return "windows";
+  if (["tab", "tabs"].includes(normalized)) return "tabs";
+  if (["space", "spaces", "taskspace", "taskspaces"].includes(normalized)) {
+    return "spaces";
+  }
+  if (["bookmark", "bookmarks", "bookmarkitem", "bookmarkitems", "item", "items"].includes(normalized)) {
+    return "bookmarkItems";
+  }
+  if (["folder", "folders", "bookmarkfolder", "bookmarkfolders"].includes(normalized)) {
+    return "bookmarkFolders";
+  }
+  throw new Error(`unsupported standard object kind: ${String(value || "")}`);
+}
+
+function standardCandidates(state, kindValue) {
+  const kind = standardKind(kindValue);
+  switch (kind) {
+    case "windows":
+      return [{ ...state.window }];
+    case "tabs":
+      return state.tabs || [];
+    case "spaces":
+      return state.taskSpaces || [];
+    case "bookmarkItems":
+      return state.bookmarkItems || [];
+    case "bookmarkFolders":
+      return flattenStandaloneBookmarkFolders(state.bookmarkFolders);
+    default:
+      return [];
+  }
+}
+
+function standardMatches(candidate, params = {}) {
+  const id = params.id ?? params.targetId;
+  const name = params.name ?? params.title;
+  if (id !== undefined && id !== null && String(id) !== "") {
+    const candidateId = candidate.id ?? candidate.targetId;
+    if (String(candidateId ?? "") !== String(id)) return false;
+  }
+  if (params.url !== undefined && String(candidate.url || "") !== String(params.url)) {
+    return false;
+  }
+  if (name !== undefined) {
+    const candidateName = candidate.name ?? candidate.title ?? "";
+    if (String(candidateName) !== String(name)) return false;
+  }
+  if (params.index !== undefined) {
+    const index = Number(params.index);
+    if (!Number.isInteger(index) || candidate.index !== index) return false;
+  }
+  return true;
+}
+
+function standardFind(state, params = {}) {
+  const candidates = standardCandidates(state, params.kind ?? params.type);
+  return candidates.find((candidate) => standardMatches(candidate, params)) || null;
+}
+
 async function standaloneTabAction(host, request) {
   const params = request.params;
   const id = await selectAutomationTarget(host, params);
@@ -740,6 +916,216 @@ async function standaloneTabAction(host, request) {
 }
 
 export async function runStandaloneAutomation(host, request) {
+  if (request.action === "application.open") {
+    const requestedUrl = request.params.url ?? request.params.target;
+    if (!requestedUrl) throw new Error("application.open requires params.url");
+    if (request.params.spaceId !== undefined && request.params.spaceId !== null) {
+      await host.useTaskSpace(Number(request.params.spaceId));
+    }
+    const tab = await host.createTab(requestedUrl);
+    await setAutomationSelection(host, tab.targetId);
+    return automationSuccess({ opened: true, tab, state: await standaloneState(host) });
+  }
+  if (request.action === "application.print") {
+    return automationSuccess(
+      await standaloneTabCommand(host, { ...request, action: "tab.print" }),
+    );
+  }
+  if (request.action === "application.quit") {
+    return automationFailure(
+      "EGO_AUTOMATION_UNSUPPORTED",
+      "application.quit is only available in the Electron desktop host",
+    );
+  }
+  if (request.action === "standard.count") {
+    const state = await standaloneState(host);
+    const kind = standardKind(request.params.kind ?? request.params.type);
+    return automationSuccess({ kind, count: standardCandidates(state, kind).length });
+  }
+  if (request.action === "standard.exists") {
+    const state = await standaloneState(host);
+    const kind = standardKind(request.params.kind ?? request.params.type);
+    const object = standardFind(state, { ...request.params, kind });
+    return automationSuccess({ kind, exists: Boolean(object), object });
+  }
+  if (request.action === "standard.delete") {
+    const state = await standaloneState(host);
+    const kind = standardKind(request.params.kind ?? request.params.type);
+    if (kind === "tabs") {
+      const id = await selectAutomationTarget(host, request.params);
+      await host.closeTarget(id);
+      const remaining = (await host.listTabs()).tabs || [];
+      await setAutomationSelection(
+        host,
+        remaining.find((tab) => tab.targetId !== id)?.targetId || null,
+      );
+      return automationSuccess({ deleted: true, kind, state: await standaloneState(host) });
+    }
+    if (kind === "bookmarkItems") {
+      const item = standardFind(state, { ...request.params, kind });
+      if (!item) throw new Error("standard.delete bookmark item not found");
+      const result = removeBookmarkItem(
+        await readStandaloneBookmarkDocument(host.profileDir),
+        { id: item.id, url: item.url },
+      );
+      if (!result.removed) throw new Error("standard.delete bookmark item failed");
+      await writeBookmarkDocument(host.profileDir, result.document);
+      return automationSuccess({
+        deleted: true,
+        kind,
+        state: await standaloneState(host),
+      });
+    }
+    if (kind === "bookmarkFolders") {
+      const folder = standardFind(state, { ...request.params, kind });
+      if (!folder) throw new Error("standard.delete bookmark folder not found");
+      const result = removeBookmarkFolder(
+        await readStandaloneBookmarkDocument(host.profileDir),
+        folder.id,
+      );
+      if (!result.removed) throw new Error("standard.delete bookmark folder failed");
+      await writeBookmarkDocument(host.profileDir, result.document);
+      return automationSuccess({
+        deleted: true,
+        kind,
+        state: await standaloneState(host),
+      });
+    }
+    return automationFailure(
+      "EGO_AUTOMATION_UNSUPPORTED",
+      `standard.delete does not support ${kind} in standalone Chromium`,
+    );
+  }
+  if (request.action === "standard.duplicate") {
+    const state = await standaloneState(host);
+    const kind = standardKind(request.params.kind ?? request.params.type);
+    if (kind === "tabs") {
+      const id = await selectAutomationTarget(host, request.params);
+      const listed = (await host.listTabs()).tabs || [];
+      const source = listed.find((tab) => tab.targetId === id);
+      if (!source) throw new Error("standard.duplicate tab not found");
+      if (source.spaceId !== null && source.spaceId !== undefined) {
+        await host.useTaskSpace(Number(source.spaceId));
+      }
+      const tab = await host.createTab(source.url || "about:blank");
+      await setAutomationSelection(host, tab.targetId);
+      return automationSuccess({
+        duplicated: true,
+        kind,
+        tab,
+        state: await standaloneState(host),
+      });
+    }
+    if (kind === "bookmarkItems" || kind === "bookmarkFolders") {
+      const object = standardFind(state, { ...request.params, kind });
+      if (!object) throw new Error("standard.duplicate bookmark object not found");
+      const result = duplicateBookmarkNode(
+        await readStandaloneBookmarkDocument(host.profileDir),
+        { id: object.id },
+      );
+      if (!result.duplicated) throw new Error("standard.duplicate bookmark object failed");
+      await writeBookmarkDocument(host.profileDir, result.document);
+      return automationSuccess({
+        duplicated: true,
+        kind,
+        bookmark: result.bookmark,
+        folder: result.folder,
+        state: await standaloneState(host),
+      });
+    }
+    return automationFailure(
+      "EGO_AUTOMATION_UNSUPPORTED",
+      `standard.duplicate does not support ${kind} in standalone Chromium`,
+    );
+  }
+  if (request.action === "standard.make") {
+    const kind = standardKind(request.params.kind ?? request.params.type);
+    if (kind === "tabs") {
+      if (request.params.spaceId !== undefined && request.params.spaceId !== null) {
+        await host.useTaskSpace(Number(request.params.spaceId));
+      }
+      const tab = await host.createTab(request.params.url || "about:blank");
+      await setAutomationSelection(host, tab.targetId);
+      return automationSuccess({
+        made: true,
+        kind,
+        tab,
+        state: await standaloneState(host),
+      });
+    }
+    if (kind === "bookmarkFolders") {
+      const result = addBookmarkFolder(
+        await readStandaloneBookmarkDocument(host.profileDir),
+        {
+          title: request.params.title ?? request.params.name,
+          parentId: request.params.parentId ?? request.params.folderId ?? "1",
+        },
+      );
+      if (!result.added) throw new Error("standard.make bookmark folder failed");
+      await writeBookmarkDocument(host.profileDir, result.document);
+      return automationSuccess({
+        made: true,
+        kind,
+        folder: result.folder,
+        state: await standaloneState(host),
+      });
+    }
+    if (kind === "bookmarkItems") {
+      const result = addBookmark(
+        await readStandaloneBookmarkDocument(host.profileDir),
+        {
+          url: request.params.url,
+          name: request.params.name ?? request.params.title,
+          parentId: request.params.parentId ?? request.params.folderId ?? "1",
+        },
+      );
+      if (!result.added) throw new Error("standard.make bookmark item failed");
+      await writeBookmarkDocument(host.profileDir, result.document);
+      return automationSuccess({
+        made: true,
+        kind,
+        bookmark: result.bookmark,
+        state: await standaloneState(host),
+      });
+    }
+    return automationFailure(
+      "EGO_AUTOMATION_UNSUPPORTED",
+      `standard.make does not support ${kind} in standalone Chromium`,
+    );
+  }
+  if (request.action === "standard.move") {
+    const kind = standardKind(
+      request.params.kind ?? request.params.type ?? "bookmarkItems",
+    );
+    if (kind !== "bookmarkItems" && kind !== "bookmarkFolders") {
+      return automationFailure(
+        "EGO_AUTOMATION_UNSUPPORTED",
+        `standard.move does not support ${kind} in standalone Chromium`,
+      );
+    }
+    const id = request.params.id ?? request.params.targetId;
+    if (id === undefined) throw new Error("standard.move requires params.id");
+    const result = moveBookmarkNode(
+      await readStandaloneBookmarkDocument(host.profileDir),
+      {
+        id,
+        parentId:
+          request.params.parentId ?? request.params.destinationFolderId ?? "1",
+        index: request.params.index,
+      },
+    );
+    if (!result.moved) throw new Error("standard.move bookmark object failed");
+    await writeBookmarkDocument(host.profileDir, result.document);
+    return automationSuccess({
+      moved: true,
+      kind,
+      parentId: result.parentId,
+      index: result.index,
+      bookmark: result.bookmark,
+      folder: result.folder,
+      state: await standaloneState(host),
+    });
+  }
   if (request.action === "state") return automationSuccess(await standaloneState(host));
   if (request.action === "window.get") {
     const state = await standaloneState(host);
@@ -868,6 +1254,34 @@ export async function runStandaloneAutomation(host, request) {
     return automationSuccess({
       removed: result.removed,
       bookmarks: state.bookmarks,
+      bookmarkFolders: state.bookmarkFolders,
+    });
+  }
+  if (request.action === "bookmark.move" || request.action === "bookmark.reorder") {
+    const id =
+      request.params.id ??
+      request.params.bookmarkId ??
+      request.params.folderId;
+    if (id === undefined) {
+      throw new Error(`${request.action} requires params.id`);
+    }
+    const document = await readStandaloneBookmarkDocument(host.profileDir);
+    const result = moveBookmarkNode(document, {
+      id,
+      parentId:
+        request.params.parentId ?? request.params.destinationFolderId ?? "1",
+      index: request.params.index,
+    });
+    if (!result.moved) throw new Error("bookmark node cannot be moved");
+    await writeBookmarkDocument(host.profileDir, result.document);
+    const state = await standaloneState(host);
+    return automationSuccess({
+      moved: true,
+      parentId: result.parentId,
+      index: result.index,
+      bookmark: result.bookmark,
+      folder: result.folder,
+      bookmarkItems: state.bookmarkItems,
       bookmarkFolders: state.bookmarkFolders,
     });
   }

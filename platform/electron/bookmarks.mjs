@@ -253,7 +253,8 @@ export function removeBookmarkItemFromDocument(document, { id, url } = {}) {
     if (!Array.isArray(node?.children)) return;
     node.children = node.children.filter((child) => {
       const matchesId = requestedId && String(child?.id || "") === requestedId;
-      const matchesUrl = canonical && canonicalUrl(child?.url) === canonical;
+      const matchesUrl =
+        !requestedId && canonical && canonicalUrl(child?.url) === canonical;
       if (child?.type === "url" && (matchesId || matchesUrl)) {
         removed += 1;
         return false;
@@ -283,6 +284,99 @@ function findFolderNode(document, folderId) {
     if (found) return found;
   }
   return null;
+}
+
+function findNodeLocation(document, nodeId) {
+  const requestedId = String(nodeId || "");
+  if (!requestedId) return null;
+  function visit(node, parent = null, index = null) {
+    if (!node || typeof node !== "object") return null;
+    if (String(node.id || "") === requestedId) return { node, parent, index };
+    for (const [childIndex, child] of (node.children || []).entries()) {
+      const found = visit(child, node, childIndex);
+      if (found) return found;
+    }
+    return null;
+  }
+  for (const root of Object.values(document?.roots || {})) {
+    const found = visit(root);
+    if (found) return found;
+  }
+  return null;
+}
+
+function containsNode(parent, candidate) {
+  if (!parent || !candidate) return false;
+  if (parent === candidate) return true;
+  return (parent.children || []).some((child) => containsNode(child, candidate));
+}
+
+export function moveBookmarkNodeInDocument(
+  document,
+  { id, parentId = "1", index } = {},
+) {
+  const next = ensureBookmarkBar(document);
+  const source = findNodeLocation(next, id);
+  const destination = findFolderNode(next, parentId || "1");
+  if (
+    !source ||
+    !source.parent ||
+    source.index === null ||
+    !destination ||
+    containsNode(source.node, destination)
+  ) {
+    return { document: next, moved: false };
+  }
+  destination.children ||= [];
+  source.parent.children.splice(source.index, 1);
+  const requestedIndex = Number(index);
+  const oneBasedIndex = Number.isInteger(requestedIndex)
+    ? requestedIndex
+    : destination.children.length + 1;
+  const insertionIndex = Math.max(
+    0,
+    Math.min(destination.children.length, oneBasedIndex - 1),
+  );
+  destination.children.splice(insertionIndex, 0, source.node);
+  const model = parseBookmarkModel(next);
+  return {
+    document: next,
+    moved: true,
+    parentId: String(destination.id),
+    index: insertionIndex + 1,
+    bookmark: model.bookmarks.find(
+      (candidate) => candidate.id === String(id),
+    ) || null,
+    folder: model.folders.find((candidate) => candidate.id === String(id)) || null,
+  };
+}
+
+export function duplicateBookmarkNodeInDocument(document, { id } = {}) {
+  const next = ensureBookmarkBar(document);
+  const source = findNodeLocation(next, id);
+  if (!source || !source.parent || source.index === null) {
+    return { document: next, duplicated: false };
+  }
+  let nextId = Number(nextBookmarkId(next));
+  const duplicate = JSON.parse(JSON.stringify(source.node));
+  function refreshIds(node) {
+    node.id = String(nextId++);
+    if (node.guid) node.guid = randomUUID();
+    for (const child of node.children || []) refreshIds(child);
+  }
+  refreshIds(duplicate);
+  source.parent.children.splice(source.index + 1, 0, duplicate);
+  const model = parseBookmarkModel(next);
+  return {
+    document: next,
+    duplicated: true,
+    parentId: String(source.parent.id),
+    index: source.index + 2,
+    bookmark: model.bookmarks.find(
+      (candidate) => candidate.id === String(duplicate.id),
+    ) || null,
+    folder: model.folders.find((candidate) => candidate.id === String(duplicate.id)) || null,
+  };
 }
 
 export function addBookmarkFolderToDocument(
