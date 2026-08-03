@@ -217,8 +217,8 @@ Opening URLs and files:
 Automation:
   --automation reads one versioned JSON request from stdin and writes one JSON
   response to stdout. Requests use {"version":1,"action":"state","params":{}}.
-  Supported actions include state, application.open/print/quit,
-  standard.count/exists/delete/duplicate/make/move, window.get, tabs.list, spaces.list,
+  Supported actions include state, application.get/open/print/quit,
+  standard.print/count/exists/delete/duplicate/make/move, window.get, tabs.list, spaces.list,
   tab.create/activate/close/navigate/back/forward/reload/stop/mute,
   tab.undo/redo/cut/copy/paste/select-all/execute/save/print/view-source,
   window.set-name/minimize/restore/maximize/unmaximize, and bookmarks.list

@@ -199,8 +199,15 @@ try {
   const historyTwoUrl = `http://127.0.0.1:${fixtureServer.address().port}/history-two`;
   const savedPath = join(profileRoot, "artifacts", "standalone-page.html");
   const printedPath = join(profileRoot, "artifacts", "standalone-page.pdf");
+  const standardPrintedPath = join(profileRoot, "artifacts", "standard-print.pdf");
+  const standardWindowPrintedPath = join(profileRoot, "artifacts", "standard-window-print.pdf");
 
   const initial = await automation({ version: 1, action: "state" });
+  assert.equal(initial.application.name, "Chromium");
+  assert.equal(typeof initial.application.frontmost, "boolean");
+  assert.ok(initial.application.version);
+  const application = await automation({ version: 1, action: "application.get" });
+  assert.equal(application.application.name, "Chromium");
   assert.equal(initial.capabilities.fullWindowInventory, false);
   assert.equal(initial.window.index, 1);
   assert.equal(initial.window.activeTabIndex, 1);
@@ -436,6 +443,26 @@ try {
     params: { url: `${fixtureUrl}?standard-open=1` },
   });
   assert.equal(standardOpened.opened, true);
+  const standardPrinted = await automation({
+    version: 1,
+    action: "standard.print",
+    params: {
+      kind: "tab",
+      id: standardOpened.tab.targetId,
+      path: standardPrintedPath,
+    },
+  });
+  assert.equal(standardPrinted.kind, "tabs");
+  assert.equal(standardPrinted.printed, true);
+  assert.equal((await readFile(standardPrintedPath)).subarray(0, 4).toString(), "%PDF");
+  const standardWindowPrinted = await automation({
+    version: 1,
+    action: "standard.print",
+    params: { kind: "window", id: "main", path: standardWindowPrintedPath },
+  });
+  assert.equal(standardWindowPrinted.kind, "windows");
+  assert.equal(standardWindowPrinted.printed, true);
+  assert.equal((await readFile(standardWindowPrintedPath)).subarray(0, 4).toString(), "%PDF");
   const activatedBySpecifier = await automation({
     version: 1,
     action: "tab.activate",

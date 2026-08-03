@@ -32,7 +32,7 @@ commands are `window.set-name`, `window.minimize`, `window.restore`,
 
 | macOS object | Observed properties and elements | Linux JSON status |
 | --- | --- | --- |
-| application | `name`, `frontmost`, `version`; windows; `open`, `print`, `quit` | `application.open`, `application.print`, and `application.quit` are exposed through the versioned JSON bridge; responses are typed Linux equivalents rather than AppleScript syntax. |
+| application | `name`, `frontmost`, `version`; windows; `open`, `print`, `quit` | `state.application` and `application.get` expose the application properties; `application.open`, `application.print`, and `application.quit` are exposed through the versioned JSON bridge. Responses are typed Linux equivalents rather than AppleScript syntax. |
 | window | `given name`, `name`/title, `id`, `index`, `bounds`, `closeable`, `minimizable`, `minimized`, `resizable`, `visible`, `zoomable`, `zoomed`, `active tab`, `mode`, `active tab index`; tabs; `close` | Electron reports the complete listed property set through the JSON window object and supports naming/minimize/restore/maximize controls. Standalone Chromium reports a synthetic window and uses `null` for native-window capability fields. |
 | tab | `id`, `title`, `URL`, `loading` | Exposed in `state` and `tabs.list`, with lifecycle, navigation, edit, save, print, source, and JavaScript actions. |
 | bookmark folder | Nested folders and items; `id`, `title`, `index` | `bookmarkFolders` preserves nested folders and exposes folder add/rename/remove/move/reorder/duplicate actions in both runtimes. |
@@ -67,7 +67,7 @@ and a 1-based `index`; `standard.move` is the generic command equivalent.
 ## Standard-suite command equivalents
 
 The generic AppleScript commands are available through typed JSON actions:
-`standard.count`, `standard.exists`, `standard.delete`,
+`standard.print`, `standard.count`, `standard.exists`, `standard.delete`,
 `standard.duplicate`, `standard.make`, and `standard.move`. They accept a
 `kind` such as `window`, `tab`, `space`, `bookmarkFolder`, or `bookmarkItem`.
 Tab and standard-object selectors accept an `id`/`targetId`, `name`/`title`,

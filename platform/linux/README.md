@@ -46,8 +46,8 @@ printf '%s\n' '{"version":1,"action":"tab.create","params":{"url":"https://examp
 
 Responses always contain `version: 1` and `ok`; failures use a stable
 `error.code`. Supported actions cover typed standard-suite equivalents
-(`application.open`, `application.print`, `application.quit`, and
-`standard.count`, `standard.exists`, `standard.delete`, `standard.duplicate`,
+(`application.get`, `application.open`, `application.print`, `application.quit`, and
+`standard.print`, `standard.count`, `standard.exists`, `standard.delete`, `standard.duplicate`,
 `standard.make`, and `standard.move`), window and Space inspection, tab creation,
 activation, closing, navigation, reload/stop, muting, editing
 (`tab.undo`, `tab.redo`, `tab.cut`, `tab.copy`, `tab.paste`, and

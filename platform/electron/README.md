@@ -131,6 +131,10 @@ duplicate/make/move actions), macOS-shaped window properties/naming and window
 state controls, and bookmark list/add/remove/open/toggle plus nested folder
 add/rename/remove/move/reorder actions. `bookmarks.list` also returns `bookmarkItems` and nested
 `bookmarkFolders` while retaining the legacy flat `bookmarks` array.
+`state.application` and `application.get` expose the macOS-shaped application
+name, frontmost state, and version fields.
+`standard.print` accepts a tab or window specifier and writes the same PDF
+output as `tab.print`; native macOS print-dialog behavior is not reproduced.
 Tab selectors accept ids, names/titles, URLs, 1-based indices, and nested
 `specifier` records for standard and direct tab actions. Bookmark selectors
 also accept nested folder paths; `standard.count`/`make`/`move` accept the

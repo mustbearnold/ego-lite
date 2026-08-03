@@ -1023,9 +1023,11 @@ function managedTabIndex(targetId, spaceId) {
 const AUTOMATION_VERSION = 1;
 const AUTOMATION_ACTIONS = new Set([
   "state",
+  "application.get",
   "application.open",
   "application.print",
   "application.quit",
+  "standard.print",
   "standard.count",
   "standard.exists",
   "standard.delete",
@@ -1133,6 +1135,14 @@ function automationWindowState() {
   };
 }
 
+function automationApplicationState() {
+  return {
+    name: app.getName() || "ego lite",
+    frontmost: Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()),
+    version: app.getVersion(),
+  };
+}
+
 function automationTab(targetId, managed) {
   return {
     id: targetId,
@@ -1159,6 +1169,7 @@ function automationState() {
     platform: "linux",
     profileId: ACTIVE_PROFILE_ID,
     serverName: SERVER_NAME,
+    application: automationApplicationState(),
     window: automationWindowState(),
     activeTabId: tabs.find((tab) => tab.active)?.id || null,
     tabs,
@@ -1598,6 +1609,12 @@ async function handleAutomationRequest(body) {
   }
   const params = body.params || {};
   try {
+    if (body.action === "application.get") {
+      return automationSuccess({
+        application: automationApplicationState(),
+        state: automationState(),
+      });
+    }
     if (body.action === "application.open") {
       const requestedUrl = params.url ?? params.target;
       if (!requestedUrl) throw new Error("application.open requires params.url");
@@ -1636,6 +1653,23 @@ async function handleAutomationRequest(body) {
           params,
         )),
         application: true,
+      });
+    }
+    if (body.action === "standard.print") {
+      const state = automationState();
+      const kind = standardKindFromParams(params, "tabs");
+      if (kind !== "tabs" && kind !== "windows") {
+        throw new Error(`standard.print does not support ${kind}`);
+      }
+      if (kind === "windows" && !standardFind(state, { ...params, kind })) {
+        throw new Error("standard.print window not found");
+      }
+      const target =
+        kind === "tabs" ? automationTarget(params) : automationTarget({});
+      return automationSuccess({
+        ...(await handleElectronTabCommand(target, "tab.print", params)),
+        kind,
+        state: automationState(),
       });
     }
     if (body.action === "application.quit") {

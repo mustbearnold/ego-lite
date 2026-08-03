@@ -207,6 +207,8 @@ try {
   const historyTwoUrl = pageUrl(port, "/history-two");
   const savedPath = join(profileDir, "artifacts", "automation-page.html");
   const printedPath = join(profileDir, "artifacts", "automation-page.pdf");
+  const standardPrintedPath = join(profileDir, "artifacts", "standard-print.pdf");
+  const standardWindowPrintedPath = join(profileDir, "artifacts", "standard-window-print.pdf");
 
   electron = startElectron();
   const bridge = await waitFor("Electron bridge", readBridge);
@@ -219,6 +221,11 @@ try {
   });
 
   const initial = await automation({ version: 1, action: "state" });
+  assert.equal(initial.application.name, "ego lite");
+  assert.equal(typeof initial.application.frontmost, "boolean");
+  assert.ok(initial.application.version);
+  const application = await automation({ version: 1, action: "application.get" });
+  assert.equal(application.application.name, "ego lite");
   assert.equal(initial.window.id, "main");
   assert.equal(initial.window.index, 1);
   assert.equal(initial.window.activeTabIndex, 1);
@@ -262,6 +269,22 @@ try {
     params: { url: twoUrl },
   });
   assert.equal(standardOpened.opened, true);
+  const standardPrinted = await automation({
+    version: 1,
+    action: "standard.print",
+    params: { kind: "tab", id: standardOpened.tab.id, path: standardPrintedPath },
+  });
+  assert.equal(standardPrinted.kind, "tabs");
+  assert.equal(standardPrinted.printed, true);
+  assert.equal((await readFile(standardPrintedPath)).subarray(0, 4).toString(), "%PDF");
+  const standardWindowPrinted = await automation({
+    version: 1,
+    action: "standard.print",
+    params: { kind: "window", id: "main", path: standardWindowPrintedPath },
+  });
+  assert.equal(standardWindowPrinted.kind, "windows");
+  assert.equal(standardWindowPrinted.printed, true);
+  assert.equal((await readFile(standardWindowPrintedPath)).subarray(0, 4).toString(), "%PDF");
   const activatedBySpecifier = await automation({
     version: 1,
     action: "tab.activate",

@@ -7,9 +7,11 @@ export const AUTOMATION_VERSION = 1;
 
 const AUTOMATION_ACTIONS = new Set([
   "state",
+  "application.get",
   "application.open",
   "application.print",
   "application.quit",
+  "standard.print",
   "standard.count",
   "standard.exists",
   "standard.delete",
@@ -649,6 +651,14 @@ function runtimeValue(result) {
   return result.result?.value;
 }
 
+function standaloneApplicationState(host) {
+  return {
+    name: host.isElectron ? "ego lite" : "Chromium",
+    frontmost: !Boolean(process.env.EGO_LITE_HEADLESS),
+    version: host.browserVersion || (host.isElectron ? "ego lite" : "Chromium"),
+  };
+}
+
 const MAX_MOVED_HISTORY_ENTRIES = 50;
 
 function standaloneNavigationUrl(value) {
@@ -1068,6 +1078,7 @@ async function standaloneState(host) {
     platform: "linux",
     profileId: host.profileId || "default",
     serverName: host.serverName || "default",
+    application: standaloneApplicationState(host),
     window: {
       id: "main",
       name: windowTitle,
@@ -1461,6 +1472,12 @@ async function standaloneTabAction(host, request) {
 }
 
 export async function runStandaloneAutomation(host, request) {
+  if (request.action === "application.get") {
+    return automationSuccess({
+      application: standaloneApplicationState(host),
+      state: await standaloneState(host),
+    });
+  }
   if (request.action === "application.open") {
     const requestedUrl = request.params.url ?? request.params.target;
     if (!requestedUrl) throw new Error("application.open requires params.url");
@@ -1475,6 +1492,44 @@ export async function runStandaloneAutomation(host, request) {
     return automationSuccess(
       await standaloneTabCommand(host, { ...request, action: "tab.print" }),
     );
+  }
+  if (request.action === "standard.print") {
+    const params = request.params;
+    const kind = standardKindFromParams(params, "tabs");
+    if (kind !== "tabs" && kind !== "windows") {
+      throw new Error(`standard.print does not support ${kind}`);
+    }
+    if (params.spaceId !== undefined) {
+      await useStandaloneScope(host, await resolveStandaloneSpaceId(host, params.spaceId));
+    }
+    const state = await standaloneState(host);
+    if (kind === "windows" && !standardFind(state, { ...params, kind })) {
+      throw new Error("standard.print window not found");
+    }
+    const commandParams = { ...params };
+    if (kind === "windows") {
+      for (const key of [
+        "id",
+        "targetId",
+        "name",
+        "title",
+        "url",
+        "index",
+        "specifier",
+        "object",
+        "targetObject",
+      ]) {
+        delete commandParams[key];
+      }
+    }
+    return automationSuccess({
+      ...(await standaloneTabCommand(host, {
+        ...request,
+        action: "tab.print",
+        params: commandParams,
+      })),
+      kind,
+    });
   }
   if (request.action === "application.quit") {
     return automationFailure(
