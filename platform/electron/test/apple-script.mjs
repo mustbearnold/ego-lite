@@ -202,10 +202,18 @@ try {
     ).result.value,
     3,
   );
-  assert.equal(
-    parseAppleScript(tell("get URL of tab 1\nget title of tab 1")).error.code,
-    "EGO_APPLESCRIPT_MULTIPLE_STATEMENTS",
+  const multi = parseAppleScript(tell("get URL of tab 1\nget title of tab 1"));
+  assert.equal(multi.ok, true);
+  assert.equal(multi.statementCount, 2);
+  assert.deepEqual(
+    multi.statements.map((statement) => statement.request.action),
+    ["state", "state"],
   );
+  const invalidMulti = parseAppleScript(
+    tell("get URL of active tab\nget unsupported thing"),
+  );
+  assert.equal(invalidMulti.ok, false);
+  assert.equal(invalidMulti.error.details.statementIndex, 1);
   assert.equal(
     parseAppleScript('tell application "Mail"\nget name\nend tell').error.code,
     "EGO_APPLESCRIPT_UNSUPPORTED_APPLICATION",
@@ -247,6 +255,12 @@ try {
     "title",
   );
   assert.equal(standaloneTitle.result.value, "AppleScript One");
+  const standaloneMulti = await runStandalone(
+    tell(`open "${oneUrl}"\nget URL of active tab`, "Chromium"),
+  );
+  assert.equal(standaloneMulti.ok, true);
+  assert.equal(standaloneMulti.result.value, oneUrl);
+  assert.equal(standaloneMulti.script.statements, 2);
   const standaloneCount = await runStandalone("count tabs");
   assert.ok(standaloneCount.result.value >= 1);
   const standaloneExists = await runStandalone("exists active tab");
@@ -263,6 +277,12 @@ try {
   const electronOpened = await runElectron(tell(`open "${oneUrl}"`));
   assert.equal(electronOpened.ok, true);
   assert.equal(electronOpened.result.tab.url, oneUrl);
+  const electronMulti = await runElectron(
+    tell(`open "${oneUrl}"\nget URL of active tab`, "Chromium"),
+  );
+  assert.equal(electronMulti.ok, true);
+  assert.equal(electronMulti.result.value, oneUrl);
+  assert.equal(electronMulti.script.statements, 2);
   const electronUrl = { result: { value: electronOpened.result.tab.url } };
   const electronVisible = await runElectron(tell("get visible of window 1"));
   assert.equal(electronVisible.result.value, false);

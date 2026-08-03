@@ -99,13 +99,17 @@ print dialog or every asset-handling detail of a desktop page save.
 
 ## Portable AppleScript-style adapter
 
-Both the standalone host and the Electron packaged CLI accept one command per
-invocation on standard input:
+Both the standalone host and the Electron packaged CLI accept one or more
+bounded commands per invocation on standard input:
 
 ```bash
 printf '%s\n' 'get URL of active tab' | ego-lite --applescript
 printf '%s\n' 'count tabs' | ego-lite --cli --applescript
 ```
+
+Commands inside a `tell application` block execute sequentially. The response
+from the final command is returned, with `script.statements` reporting the
+number of commands when the block contained more than one.
 
 The adapter accepts the observed `tell application` wrapper for `ego lite`,
 `Chromium`, and compatible ego-browser names. It translates application
@@ -116,8 +120,8 @@ standard-suite `delete`, `duplicate`, `make new`, and `move` forms. `get`,
 `count`, and `exists` return their value under `result.value`; mutating commands
 retain the typed automation result so callers can inspect the resulting state.
 
-The adapter intentionally rejects multiple statements, unsupported application
-targets, and forms it cannot translate. Print and save use explicit `in file`
-paths (or the existing typed environment overrides); native AppleScript
-execution, full coercion, AppleScript records beyond the supported property
-forms, and the native macOS print dialog remain outside this Linux boundary.
+The adapter intentionally rejects unsupported application targets and forms it
+cannot translate. Print and save use explicit `in file` paths (or the existing
+typed environment overrides); native AppleScript execution, full coercion,
+AppleScript records beyond the supported property forms, and the native macOS
+print dialog remain outside this Linux boundary.

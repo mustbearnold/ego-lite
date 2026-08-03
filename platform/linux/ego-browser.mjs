@@ -235,11 +235,12 @@ Automation:
   when the standalone source is outside the selected scope.
 
 AppleScript compatibility:
-  --applescript translates one common AppleScript-style command into the typed
-  Linux automation contract. It supports tell application blocks plus common
-  application, window, tab, bookmark, count, exists, get, set, open, print,
-  save, execute, and standard-suite commands. It is a portable adapter, not
-  native AppleScript or full macOS specifier coercion.
+  --applescript translates bounded AppleScript-style command blocks into the
+  typed Linux automation contract. Commands execute sequentially. It supports
+  tell application blocks plus common application, window, tab, bookmark,
+  count, exists, get, set, open, print, save, execute, and standard-suite
+  commands. It is a portable adapter, not native AppleScript or full macOS
+  specifier coercion.
 
 Migration:
   --migrate-profile imports bookmarks, browser settings, extensions, local
@@ -2550,14 +2551,24 @@ async function runAutomation(host, source) {
 async function runAppleScript(host, source) {
   const parsed = parseAppleScript(source);
   if (parsed?.ok === false) return parsed;
-  try {
-    const response = host.electronBridge
-      ? await host.electronBridge.request("/automation", parsed.request)
-      : await runStandaloneAutomation(host, parsed.request);
-    return projectAppleScriptResponse(response, parsed.projection);
-  } catch (error) {
-    return automationErrorResponse(error);
+  const statements = parsed.statements || [
+    { request: parsed.request, projection: parsed.projection },
+  ];
+  let response;
+  for (const statement of statements) {
+    try {
+      response = host.electronBridge
+        ? await host.electronBridge.request("/automation", statement.request)
+        : await runStandaloneAutomation(host, statement.request);
+      response = projectAppleScriptResponse(response, statement.projection);
+      if (response?.ok !== true) return response;
+    } catch (error) {
+      return automationErrorResponse(error);
+    }
   }
+  return statements.length > 1
+    ? { ...response, script: { statements: statements.length } }
+    : response;
 }
 
 const EXTERNAL_TARGET_PROTOCOLS = new Set(["file:", "http:", "https:"]);

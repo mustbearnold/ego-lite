@@ -76,8 +76,9 @@ Chromium it reports the active scope and uses CDP for the same tab actions
 where Chromium exposes them.
 
 For scripts written against the inspected macOS scripting dictionary, the host
-also provides a portable AppleScript-style adapter. It accepts one common
-command per invocation and translates it into the same typed dispatcher:
+also provides a portable AppleScript-style adapter. It accepts bounded
+single- or multi-command blocks and translates them into the same typed
+dispatcher:
 
 ```bash
 printf '%s\n' 'get URL of active tab' | ego-lite --applescript
@@ -88,10 +89,11 @@ The supported subset covers `tell application`, application/window/tab and
 bookmark specifiers, `get`, `count`, `exists`, `set`, `open`, explicit-file
 `print`/`save`, JavaScript execution, tab editing/navigation, and the covered
 standard-suite mutations. `get`, `count`, and `exists` project a scalar under
-`result.value`; other successful responses retain the typed result. This is not
-native AppleScript: multi-statement scripts, complete implicit specifier
-coercion, unsupported AppleScript records, and the native macOS print dialog
-remain outside the Linux host boundary.
+`result.value`; other successful responses retain the typed result. Commands in
+a block execute sequentially, and multi-command responses include
+`script.statements`. This is not native AppleScript: complete implicit
+specifier coercion, unsupported AppleScript records, and the native macOS print
+dialog remain outside the Linux host boundary.
 
 Tagged AppImage releases check for updates in the background and apply a downloaded update on the next launch; Debian and RPM installations use their package-manager update path. Set `EGO_LITE_DISABLE_AUTO_UPDATE=1` for offline or automated runs.
 

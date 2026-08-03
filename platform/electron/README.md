@@ -172,11 +172,12 @@ printf '%s\n' 'count tabs' | ego-lite --cli --applescript
 
 The subset covers application/window/tab/bookmark specifiers, `get`, `count`,
 `exists`, `set`, `open`, explicit-file `print`/`save`, `execute javascript`,
-tab editing/navigation, and the covered standard-suite mutations. Scalar
-queries return `result.value`; mutating commands retain the typed automation
-result. Native AppleScript parsing, multi-statement execution, full implicit
-specifier coercion, and the native macOS print dialog are intentionally not
-claimed. Run the focused source/Electron probe with:
+tab editing/navigation, and the covered standard-suite mutations. Commands in
+a block execute sequentially; the final response includes `script.statements`
+when more than one command ran. Scalar queries return `result.value`; mutating
+commands retain the typed automation result. Native AppleScript parsing, full
+implicit specifier coercion, and the native macOS print dialog are intentionally
+not claimed. Run the focused source/Electron probe with:
 
 ```bash
 npm run test:apple-script

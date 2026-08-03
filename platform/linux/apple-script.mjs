@@ -106,12 +106,28 @@ export function parseAppleScript(source) {
   if (normalized.ok === false) return normalized;
 
   try {
-    const parsed = parseStatement(normalized.statement);
-    return { ok: true, ...parsed };
+    const parsed = normalized.statements.map((statement, index) => {
+      try {
+        return parseStatement(statement);
+      } catch (error) {
+        error.details = {
+          ...(error.details || {}),
+          statementIndex: index,
+        };
+        throw error;
+      }
+    });
+    if (parsed.length === 1) return { ok: true, ...parsed[0] };
+    return {
+      ok: true,
+      statements: parsed,
+      statementCount: parsed.length,
+    };
   } catch (error) {
     return appleScriptFailure(
       error?.code || "EGO_APPLESCRIPT_UNSUPPORTED_SYNTAX",
       error?.message || String(error),
+      error?.details,
     );
   }
 }
@@ -182,14 +198,13 @@ function normalizeScript(source) {
   }
 
   const statements = splitStatements(body).map(compactWhitespace).filter(Boolean);
-  if (statements.length !== 1) {
+  if (statements.length === 0) {
     return appleScriptFailure(
-      "EGO_APPLESCRIPT_MULTIPLE_STATEMENTS",
-      "the Linux AppleScript adapter accepts one command per invocation",
-      { statements: statements.length },
+      "EGO_APPLESCRIPT_INVALID_SOURCE",
+      "tell application block contains no command",
     );
   }
-  return { ok: true, statement: statements[0] };
+  return { ok: true, statements };
 }
 
 function parseStatement(statement) {
