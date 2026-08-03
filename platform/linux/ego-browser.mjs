@@ -220,7 +220,8 @@ Automation:
   Supported actions include state, window.get, tabs.list, spaces.list,
   tab.create/activate/close/navigate/back/forward/reload/stop/mute,
   tab.undo/redo/cut/copy/paste/select-all/execute/save/print/view-source,
-  and bookmarks.list plus bookmark.add/remove/open/toggle.
+  window.set-name/minimize/restore/maximize/unmaximize, and bookmarks.list
+  plus bookmark.folder.add/rename/remove and bookmark.add/remove/open/toggle.
 
 Migration:
   --migrate-profile imports bookmarks, browser settings, extensions, local

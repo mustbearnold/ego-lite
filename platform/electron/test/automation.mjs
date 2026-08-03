@@ -212,9 +212,54 @@ try {
 
   const initial = await automation({ version: 1, action: "state" });
   assert.equal(initial.window.id, "main");
+  assert.equal(initial.window.index, 1);
+  assert.equal(initial.window.activeTabIndex, 1);
+  assert.equal(initial.window.mode, "normal");
+  assert.equal(typeof initial.window.closeable, "boolean");
+  assert.equal(typeof initial.window.minimizable, "boolean");
+  assert.equal(typeof initial.window.resizable, "boolean");
+  assert.equal(typeof initial.window.zoomable, "boolean");
   assert.equal(initial.capabilities.fullWindowInventory, true);
   assert.equal(initial.tabs.filter((tab) => tab.spaceId === null).length, 1);
   assert.equal(initial.taskSpaces[0].name, "Automation Space");
+  const namedWindow = await automation({
+    version: 1,
+    action: "window.set-name",
+    params: { name: "Automation Window" },
+  });
+  assert.equal(namedWindow.window.name, "Automation Window");
+  assert.equal(namedWindow.window.givenName, "Automation Window");
+  const namedWindowGet = await automation({ version: 1, action: "window.get" });
+  assert.equal(namedWindowGet.window.givenName, "Automation Window");
+  assert.equal(
+    JSON.parse(await readFile(join(profileDir, "ego-lite-window.json"))).givenName,
+    "Automation Window",
+  );
+  const minimizedWindow = await automation({
+    version: 1,
+    action: "window.minimize",
+  });
+  assert.equal(typeof minimizedWindow.window.minimized, "boolean");
+  const restoredWindow = await automation({
+    version: 1,
+    action: "window.restore",
+  });
+  assert.equal(restoredWindow.window.minimized, false);
+  const maximizedWindow = await automation({
+    version: 1,
+    action: "window.maximize",
+  });
+  assert.equal(typeof maximizedWindow.window.zoomed, "boolean");
+  const unmaximizedWindow = await automation({
+    version: 1,
+    action: "window.unmaximize",
+  });
+  assert.equal(typeof unmaximizedWindow.window.zoomed, "boolean");
+  await automation({
+    version: 1,
+    action: "window.set-name",
+    params: { name: "" },
+  });
 
   const listed = await automation({ version: 1, action: "tabs.list" });
   assert.equal(listed.tabs.length, initial.tabs.length);
@@ -333,6 +378,49 @@ try {
   const activatedTask = await automation({ version: 1, action: "state" });
   assert.equal(activatedTask.activeTabId, taskTab.tab.id);
   await automation({ version: 1, action: "tab.close", params: { id: taskTab.tab.id } });
+
+  const folderAdded = await automation({
+    version: 1,
+    action: "bookmark.folder.add",
+    params: { title: "Automation Folder" },
+  });
+  assert.equal(folderAdded.added, true);
+  assert.equal(folderAdded.folder.title, "Automation Folder");
+  const nestedBookmark = await automation({
+    version: 1,
+    action: "bookmark.add",
+    params: {
+      url: spaceUrl,
+      name: "Nested Automation Space",
+      parentId: folderAdded.folder.id,
+    },
+  });
+  assert.equal(nestedBookmark.bookmark.folderId, folderAdded.folder.id);
+  assert.equal(nestedBookmark.bookmark.folder, "Bookmarks bar / Automation Folder");
+  const renamedFolder = await automation({
+    version: 1,
+    action: "bookmark.folder.rename",
+    params: { id: folderAdded.folder.id, title: "Renamed Automation Folder" },
+  });
+  assert.equal(renamedFolder.folder.title, "Renamed Automation Folder");
+  assert.equal(
+    renamedFolder.bookmarkFolders[0].folders.some(
+      (folder) => folder.title === "Renamed Automation Folder",
+    ),
+    true,
+  );
+  const removedNestedBookmark = await automation({
+    version: 1,
+    action: "bookmark.remove",
+    params: { id: nestedBookmark.bookmark.id },
+  });
+  assert.equal(removedNestedBookmark.removed, 1);
+  const removedFolder = await automation({
+    version: 1,
+    action: "bookmark.folder.remove",
+    params: { id: folderAdded.folder.id },
+  });
+  assert.equal(removedFolder.removed, 1);
 
   const added = await automation({
     version: 1,

@@ -20,15 +20,23 @@ port uses authenticated versioned JSON because AppleScript is not available on
 Linux; the JSON actions below are the transport-level equivalent, not an
 attempt to emulate AppleScript syntax or specifier resolution.
 
+The JSON response keeps the original flat `bookmarks` array for existing
+clients and adds `bookmarkItems` plus nested `bookmarkFolders`. Linux keeps an
+ego-owned bookmark document alongside Chromium's profile file so mutations
+survive Chromium shutdown and restart. Window state keeps the existing `title`
+field and adds the macOS-shaped property names; the Electron-only window
+commands are `window.set-name`, `window.minimize`, `window.restore`,
+`window.maximize`, and `window.unmaximize`.
+
 ## Objects and properties
 
 | macOS object | Observed properties and elements | Linux JSON status |
 | --- | --- | --- |
 | application | `name`, `frontmost`, `version`; windows; `open`, `print`, `quit` | Window/tab state is exposed through `state`, `window.get`, and `tabs.list`; application-level commands are not yet mapped one-for-one. |
-| window | `given name`, `name`/title, `id`, `index`, `bounds`, `closeable`, `minimizable`, `minimized`, `resizable`, `visible`, `zoomable`, `zoomed`, `active tab`, `mode`, `active tab index`; tabs; `close` | Electron reports a useful window state and tab inventory. Standalone Chromium reports a synthetic window; the full macOS property set is not yet exposed. |
+| window | `given name`, `name`/title, `id`, `index`, `bounds`, `closeable`, `minimizable`, `minimized`, `resizable`, `visible`, `zoomable`, `zoomed`, `active tab`, `mode`, `active tab index`; tabs; `close` | Electron reports the complete listed property set through the JSON window object and supports naming/minimize/restore/maximize controls. Standalone Chromium reports a synthetic window and uses `null` for native-window capability fields. |
 | tab | `id`, `title`, `URL`, `loading` | Exposed in `state` and `tabs.list`, with lifecycle, navigation, edit, save, print, source, and JavaScript actions. |
-| bookmark folder | Nested folders and items; `id`, `title`, `index` | The Linux contract currently flattens bookmark items and does not expose folder CRUD or nested folder traversal. |
-| bookmark item | `id`, `title`, `URL`, `index` | Stable item ids plus list/add/remove/open/toggle are exposed; parent-folder and index semantics remain incomplete. |
+| bookmark folder | Nested folders and items; `id`, `title`, `index` | `bookmarkFolders` preserves nested folders and exposes folder add/rename/remove actions in both runtimes. Move/reorder semantics remain. |
+| bookmark item | `id`, `title`, `URL`, `index` | `bookmarkItems` exposes stable ids, titles, URLs, parent folder ids, and child indices; list/add/remove/open/toggle are exposed. Move/reorder semantics remain. |
 
 ## Tab commands
 
@@ -49,6 +57,12 @@ The inspected tab class responds to the following commands:
 | `print` | `tab.print` with `params.path` |
 | `view source` | `tab.view-source` |
 | `close` | `tab.close` |
+
+Bookmark folder mutations use `bookmark.folder.add`,
+`bookmark.folder.rename`, and `bookmark.folder.remove`; item mutations accept
+`parentId`/`folderId` for nested insertion and remove by exact item id when
+provided. A future slice will add move/reorder operations so indices can be
+changed after creation.
 
 Electron delegates save to Chromium's page archive and print to Chromium's PDF
 output. The standalone host supports HTML/DOM serialization and MHTML capture

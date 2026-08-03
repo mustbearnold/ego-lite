@@ -49,7 +49,11 @@ Responses always contain `version: 1` and `ok`; failures use a stable
 activation, closing, navigation, reload/stop, muting, editing
 (`tab.undo`, `tab.redo`, `tab.cut`, `tab.copy`, `tab.paste`, and
 `tab.select-all`), JavaScript execution, page save, PDF print, view source, and
-bookmark list/add/remove/open/toggle. `tab.execute` takes
+bookmark list/add/remove/open/toggle plus nested folder add/rename/remove.
+Window state includes macOS-shaped name, bounds, capability, active-tab, and
+mode fields; bookmark mutations are mirrored to an ego-owned profile store so
+they survive Chromium shutdown; native window mutations remain Electron-only.
+`tab.execute` takes
 `params.javascript`; `tab.save` and `tab.print` require `params.path` when
 running standalone. When attached to Electron, the CLI uses the authenticated
 bridge and reports the complete managed-tab inventory. Against standalone

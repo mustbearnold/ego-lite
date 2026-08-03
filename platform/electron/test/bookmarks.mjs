@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
 import {
+  addBookmarkFolderToDocument,
   addBookmarkToDocument,
+  parseBookmarkModel,
   parseBookmarksDocument,
+  removeBookmarkFolderFromDocument,
+  removeBookmarkItemFromDocument,
   removeBookmarkFromDocument,
+  renameBookmarkFolderInDocument,
 } from "../bookmarks.mjs";
 
 const bookmarks = parseBookmarksDocument({
@@ -75,6 +80,36 @@ assert.deepEqual(bookmarks, [
   },
 ]);
 
+const model = parseBookmarkModel({
+  roots: {
+    bookmark_bar: {
+      type: "folder",
+      id: "1",
+      name: "Bookmarks bar",
+      children: [
+        {
+          type: "folder",
+          id: "7",
+          name: "Projects",
+          children: [
+            {
+              type: "url",
+              id: "8",
+              name: "Project home",
+              url: "https://project.example/",
+            },
+          ],
+        },
+      ],
+    },
+  },
+});
+assert.equal(model.bookmarkFolders[0].id, "1");
+assert.equal(model.bookmarkFolders[0].folders[0].id, "7");
+assert.equal(model.bookmarkFolders[0].folders[0].items[0].folderId, "7");
+assert.equal(model.bookmarks[0].title, "Project home");
+assert.equal(model.bookmarks[0].index, 1);
+
 const added = addBookmarkToDocument(
   { roots: {} },
   {
@@ -99,6 +134,34 @@ assert.equal(
   }).added,
   false,
 );
+const folderAdded = addBookmarkFolderToDocument(added.document, {
+  title: "Projects",
+});
+assert.equal(folderAdded.added, true);
+const folderId = folderAdded.folder.id;
+const nestedBookmark = addBookmarkToDocument(folderAdded.document, {
+  url: "https://nested.example/",
+  name: "Nested",
+  parentId: folderId,
+});
+assert.equal(nestedBookmark.added, true);
+assert.equal(nestedBookmark.bookmark.folderId, folderId);
+assert.equal(nestedBookmark.bookmark.folder, "Bookmarks bar / Projects");
+const renamedFolder = renameBookmarkFolderInDocument(nestedBookmark.document, {
+  id: folderId,
+  title: "Renamed projects",
+});
+assert.equal(renamedFolder.renamed, true);
+assert.equal(renamedFolder.folder.title, "Renamed projects");
+const removedItem = removeBookmarkItemFromDocument(renamedFolder.document, {
+  id: nestedBookmark.bookmark.id,
+});
+assert.equal(removedItem.removed, 1);
+const removedFolder = removeBookmarkFolderFromDocument(
+  removedItem.document,
+  folderId,
+);
+assert.equal(removedFolder.removed, 1);
 const removed = removeBookmarkFromDocument(added.document, "https://new.example/");
 assert.equal(removed.removed, 1);
 assert.deepEqual(parseBookmarksDocument(removed.document), []);

@@ -26,18 +26,18 @@ similar-looking toolbar as proof of parity.
 | Shared logged-in browser state with isolated agent storage | Implemented with Linux tab-scoped Spaces | Electron uses separate persistent task views and inherits a cookie snapshot; the standalone host uses Chromium contexts when available. |
 | Snapshot and `ego-browser` automation | Implemented with a known engine difference | The helper surface and CDP contract are shared; Linux renders Chromium AX trees and walks nested frames instead of using the macOS custom snapshot engine. |
 | Open HTTP/HTTPS URLs and local files from the desktop | Implemented in this parity slice | Linux desktop entries pass `%U`; Electron handles initial arguments, second instances, `open-file`, and `open-url`; standalone launches open one or more targets. |
-| Window/tab properties exposed to automation | Partial | The authenticated bridge and `ego-lite --automation` CLI expose a versioned window, tab, Space, loading, group, audio, and devtools state model. Electron reports bounds and visibility; standalone Chromium reports a synthetic window. The full macOS window property set, AppleScript syntax, and specifier semantics remain gaps. |
+| Window/tab properties exposed to automation | Implemented with standalone limits | Electron now reports the macOS-shaped window name/given name, index, bounds, close/minimize/resize/zoom capability flags, minimized/zoomed/visible state, active tab/index, mode, and the existing tab model. Standalone Chromium reports the same fields where meaningful and `null` for native-window capabilities. AppleScript syntax and specifier semantics remain gaps. |
 | Back, forward, reload, stop, save, print, view source, and execute JavaScript | Implemented with output differences | The authenticated bridge and CLI now cover navigation, editing, JavaScript execution, save, print-to-PDF, and view-source actions. Electron delegates page saves to Chromium; standalone CDP saves serialize HTML or capture MHTML. Native macOS print-dialog behavior and all save-format details are not identical. |
-| Bookmark folders and bookmark items are scriptable | Partial | Bookmark listing, add, remove, open, and toggle actions return stable item ids. The current Linux contract flattens items and does not yet expose the macOS nested folder object model, parent folders, or index semantics. |
+| Bookmark folders and bookmark items are scriptable | Implemented with command gaps | `bookmarks.list` now preserves nested folder trees, folder ids/titles/indices, item parent folders, item titles/URLs/indices, and the legacy flat list. Folder add/rename/remove and exact-id item mutations work in both runtimes; an ego-owned bookmark store survives Chromium profile shutdown; generic AppleScript move/specifier commands remain gaps. |
 | AppleScript application/window/tab/bookmark automation | Partial Linux equivalent | Linux exposes the shared observable boundary through authenticated HTTP bridge calls and a one-shot versioned JSON CLI. AppleScript itself, generic standard-suite commands, and full object/specifier semantics remain macOS-only or unfinished. |
 | Migration, extensions, private tabs, downloads, history, reading list, sync, profiles, fullscreen, find, devtools, and updates | Implemented or intentionally Linux-specific | See `platform/electron/README.md` for the detached probe attached to each feature. |
 
 ## Next parity slices
 
-1. Map the remaining macOS window properties and standard-suite commands onto
-   the Linux JSON contract.
-2. Preserve bookmark folder nesting and item parent/index information instead
-   of flattening the bookmark tree.
+1. Map the remaining macOS application and standard-suite commands (`open`,
+   `print`, `quit`, `count`, `exists`, `make`, `move`, and related specifiers)
+   onto the Linux JSON contract.
+2. Add bookmark move/reorder semantics and test index updates after mutation.
 3. Close remaining snapshot wording and interaction differences against a
    captured macOS contract corpus.
 

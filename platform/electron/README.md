@@ -125,7 +125,11 @@ The contract covers window state, the complete primary and Agent-Space tab
 inventory, Space listing, tab lifecycle/navigation/reload/stop/mute actions,
 editing commands (`tab.undo`, `tab.redo`, `tab.cut`, `tab.copy`,
 `tab.paste`, and `tab.select-all`), JavaScript execution, page save, PDF print,
-view source, and bookmark list/add/remove/open/toggle actions. `tab.execute`
+view source, macOS-shaped window properties/naming and window state controls,
+and bookmark list/add/remove/open/toggle plus nested folder add/rename/remove
+actions. `bookmarks.list` also returns `bookmarkItems` and nested
+`bookmarkFolders` while retaining the legacy flat `bookmarks` array.
+`tab.execute`
 accepts `params.javascript`; `tab.save` and `tab.print` accept an explicit
 absolute or relative `params.path` (or the corresponding environment override
 used by detached runs), and `tab.save` accepts `params.as` values such as

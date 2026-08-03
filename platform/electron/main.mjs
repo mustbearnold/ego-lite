@@ -28,10 +28,15 @@ import {
   profileLooksUsable,
 } from "./migration-discovery.mjs";
 import {
+  addBookmarkFolderToDocument,
   addBookmarkToDocument,
   readBookmarks,
   readBookmarksDocument,
+  readBookmarkModel,
+  removeBookmarkFolderFromDocument,
   removeBookmarkFromDocument,
+  removeBookmarkItemFromDocument,
+  renameBookmarkFolderInDocument,
 } from "./bookmarks.mjs";
 import {
   browserSyncDocument,
@@ -184,6 +189,7 @@ if (process.env.EGO_LITE_DISABLE_GPU === "1") {
 
 let mainWindow;
 let browserView;
+let windowGivenName = "";
 const managedViews = new Map();
 const closedPrimaryTabs = [];
 const sessionPermissionStates = new WeakMap();
@@ -221,6 +227,7 @@ const PENDING_IMPORT_PATH = join(PROFILE_DIR, PENDING_IMPORT_FILE);
 const SPACE_SESSION_FILE = "ego-lite-space-session.json";
 const SPACE_SESSION_PATH = join(PROFILE_DIR, SPACE_SESSION_FILE);
 const BOOKMARKS_PATH = join(PROFILE_DIR, "Default", "Bookmarks");
+const BOOKMARKS_STATE_PATH = join(PROFILE_DIR, "ego-lite-bookmarks.json");
 const HISTORY_PATH = join(PROFILE_DIR, "ego-lite-history.json");
 const READING_LIST_PATH = join(PROFILE_DIR, "ego-lite-reading-list.json");
 const BROWSER_SYNC_PATH = join(PROFILE_DIR, "ego-lite-browser-sync.json");
@@ -376,10 +383,21 @@ function readHistory() {
 }
 
 function writeBookmarksDocument(document) {
-  const temporaryPath = `${BOOKMARKS_PATH}.${process.pid}.tmp`;
-  mkdirSync(dirname(BOOKMARKS_PATH), { recursive: true });
-  writeFileSync(temporaryPath, `${JSON.stringify(document, null, 2)}\n`);
-  renameSync(temporaryPath, BOOKMARKS_PATH);
+  const serialized = `${JSON.stringify(document, null, 2)}\n`;
+  for (const path of [BOOKMARKS_STATE_PATH, BOOKMARKS_PATH]) {
+    const temporaryPath = `${path}.${process.pid}.tmp`;
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(temporaryPath, serialized);
+    renameSync(temporaryPath, path);
+  }
+}
+
+function readBookmarkStoreDocument() {
+  return (
+    readBookmarksDocument(BOOKMARKS_STATE_PATH) ||
+    readBookmarksDocument(BOOKMARKS_PATH) ||
+    { roots: {} }
+  );
 }
 
 function activeBookmarkTarget() {
@@ -414,7 +432,7 @@ function toggleCurrentBookmark() {
   ) {
     throw new Error("bookmarks are available only for normal HTTP(S) tabs");
   }
-  const document = readBookmarksDocument(BOOKMARKS_PATH) || { roots: {} };
+  const document = readBookmarkStoreDocument();
   const existing = bookmarks.some((bookmark) => bookmark.url === url);
   const result = existing
     ? removeBookmarkFromDocument(document, url)
@@ -424,7 +442,7 @@ function toggleCurrentBookmark() {
       });
   if (!existing && !result.added) throw new Error("could not add bookmark");
   writeBookmarksDocument(result.document);
-  bookmarks = readBookmarks(BOOKMARKS_PATH);
+  bookmarks = readBookmarks(BOOKMARKS_STATE_PATH);
   publishBrowserState();
   return currentBrowserState();
 }
@@ -526,7 +544,10 @@ async function runBrowserDataSync({ force = false } = {}) {
       : historyEntries;
     const historyChanged = JSON.stringify(nextHistory) !== JSON.stringify(historyEntries);
     if (data.bookmarksDocument) writeBookmarksDocument(data.bookmarksDocument);
-    bookmarks = data.bookmarks !== null ? readBookmarks(BOOKMARKS_PATH) : nextBookmarks;
+    bookmarks =
+      data.bookmarks !== null
+        ? readBookmarks(BOOKMARKS_STATE_PATH)
+        : nextBookmarks;
     if (historyChanged) {
       historyEntries = nextHistory;
       writeHistory();
@@ -777,6 +798,10 @@ function readWindowState() {
       WINDOW_DEFAULT_HEIGHT,
     ),
     maximized: Boolean(stored.maximized),
+    givenName:
+      typeof stored.givenName === "string"
+        ? stored.givenName.trim().slice(0, 160)
+        : "",
   };
   const x = Number(stored.x);
   const y = Number(stored.y);
@@ -806,6 +831,7 @@ function currentWindowState() {
     width: bounds.width,
     height: bounds.height,
     maximized: mainWindow.isMaximized(),
+    givenName: windowGivenName,
   };
 }
 
@@ -1008,7 +1034,15 @@ const AUTOMATION_ACTIONS = new Set([
   "tab.save",
   "tab.print",
   "tab.view-source",
+  "window.set-name",
+  "window.minimize",
+  "window.restore",
+  "window.maximize",
+  "window.unmaximize",
   "bookmarks.list",
+  "bookmark.folder.add",
+  "bookmark.folder.rename",
+  "bookmark.folder.remove",
   "bookmark.add",
   "bookmark.remove",
   "bookmark.open",
@@ -1033,15 +1067,45 @@ function automationFailure(code, message, details = undefined) {
 
 function automationWindowState() {
   const available = Boolean(mainWindow && !mainWindow.isDestroyed());
+  const tabs = [...managedViews.entries()];
+  const activeEntry = tabs.find(([, managed]) => managed.view === browserView);
+  const activeTabIndex = activeEntry
+    ? tabs.findIndex(([targetId]) => targetId === activeEntry[0]) + 1
+    : null;
   return {
     id: "main",
+    name: available ? mainWindow.getTitle() || "ego lite" : "ego lite",
     title: available ? mainWindow.getTitle() || "ego lite" : "ego lite",
+    givenName: windowGivenName,
+    index: 1,
     active: available,
     visible: available && mainWindow.isVisible(),
     minimized: available && mainWindow.isMinimized(),
     maximized: available && mainWindow.isMaximized(),
+    zoomed: available && mainWindow.isMaximized(),
     fullscreen: available && mainWindow.isFullScreen(),
     bounds: available ? mainWindow.getBounds() : null,
+    closeable:
+      available && typeof mainWindow.isClosable === "function"
+        ? mainWindow.isClosable()
+        : false,
+    minimizable:
+      available && typeof mainWindow.isMinimizable === "function"
+        ? mainWindow.isMinimizable()
+        : false,
+    resizable:
+      available && typeof mainWindow.isResizable === "function"
+        ? mainWindow.isResizable()
+        : false,
+    zoomable:
+      available && typeof mainWindow.isMaximizable === "function"
+        ? mainWindow.isMaximizable()
+        : false,
+    activeTab: activeEntry
+      ? automationTab(activeEntry[0], activeEntry[1])
+      : null,
+    activeTabIndex,
+    mode: activeEntry?.[1]?.private ? "incognito" : "normal",
   };
 }
 
@@ -1074,7 +1138,7 @@ function automationState() {
     activeTabId: tabs.find((tab) => tab.active)?.id || null,
     tabs,
     taskSpaces: currentTaskSpaces(),
-    bookmarks: bookmarks.map((bookmark) => ({ ...bookmark })),
+    ...automationBookmarkState(),
     capabilities: {
       windowActions: true,
       tabActions: true,
@@ -1130,6 +1194,15 @@ function automationBookmark(params = {}) {
   );
   if (!bookmark) throw new Error("bookmark not found");
   return bookmark;
+}
+
+function automationBookmarkState() {
+  const model = readBookmarkModel(BOOKMARKS_STATE_PATH);
+  return {
+    bookmarks: bookmarks.map((bookmark) => ({ ...bookmark })),
+    bookmarkItems: model.bookmarks,
+    bookmarkFolders: model.bookmarkFolders,
+  };
 }
 
 function automationOutputPath(value, environmentVariable, message) {
@@ -1259,6 +1332,41 @@ async function handleAutomationRequest(body) {
       mainWindow.focus();
       return automationSuccess({ window: automationWindowState() });
     }
+    if (body.action === "window.set-name") {
+      if (!mainWindow || mainWindow.isDestroyed()) {
+        throw new Error("ego lite window is unavailable");
+      }
+      const name = String(params.name ?? params.givenName ?? "")
+        .trim()
+        .slice(0, 160);
+      windowGivenName = name;
+      mainWindow.setTitle(name || "ego lite");
+      saveWindowStateSync();
+      publishBrowserState();
+      return automationSuccess({ window: automationWindowState() });
+    }
+    if (
+      [
+        "window.minimize",
+        "window.restore",
+        "window.maximize",
+        "window.unmaximize",
+      ].includes(body.action)
+    ) {
+      if (!mainWindow || mainWindow.isDestroyed()) {
+        throw new Error("ego lite window is unavailable");
+      }
+      const methods = {
+        "window.minimize": "minimize",
+        "window.restore": "restore",
+        "window.maximize": "maximize",
+        "window.unmaximize": "unmaximize",
+      };
+      mainWindow[methods[body.action]]();
+      scheduleWindowStateSave();
+      publishBrowserState();
+      return automationSuccess({ window: automationWindowState() });
+    }
     if (body.action === "window.fullscreen") {
       if (!mainWindow || mainWindow.isDestroyed()) {
         throw new Error("ego lite window is unavailable");
@@ -1385,35 +1493,109 @@ async function handleAutomationRequest(body) {
       );
     }
     if (body.action === "bookmarks.list") {
-      return automationSuccess({ bookmarks: automationState().bookmarks });
+      const state = automationState();
+      return automationSuccess({
+        bookmarks: state.bookmarks,
+        bookmarkItems: state.bookmarkItems,
+        bookmarkFolders: state.bookmarkFolders,
+      });
+    }
+    if (body.action === "bookmark.folder.add") {
+      const title = String(params.title ?? params.name ?? "").trim();
+      if (!title) throw new Error("bookmark.folder.add requires params.title");
+      const document = readBookmarkStoreDocument();
+      const result = addBookmarkFolderToDocument(document, {
+        title,
+        parentId: params.parentId ?? params.folderId ?? "1",
+      });
+      if (!result.added) throw new Error("bookmark folder parent not found");
+      writeBookmarksDocument(result.document);
+      bookmarks = readBookmarks(BOOKMARKS_STATE_PATH);
+      publishBrowserState();
+      const state = automationState();
+      return automationSuccess({
+        added: true,
+        folder: result.folder,
+        bookmarkFolders: state.bookmarkFolders,
+      });
+    }
+    if (body.action === "bookmark.folder.rename") {
+      const id = params.id ?? params.folderId;
+      const title = String(params.title ?? params.name ?? "").trim();
+      if (id === undefined || !title) {
+        throw new Error(
+          "bookmark.folder.rename requires params.id and params.title",
+        );
+      }
+      const document = readBookmarkStoreDocument();
+      const result = renameBookmarkFolderInDocument(document, { id, title });
+      if (!result.renamed) throw new Error("bookmark folder not found");
+      writeBookmarksDocument(result.document);
+      bookmarks = readBookmarks(BOOKMARKS_STATE_PATH);
+      publishBrowserState();
+      const state = automationState();
+      return automationSuccess({
+        renamed: true,
+        folder: result.folder,
+        bookmarkFolders: state.bookmarkFolders,
+      });
+    }
+    if (body.action === "bookmark.folder.remove") {
+      const id = params.id ?? params.folderId;
+      if (id === undefined) {
+        throw new Error("bookmark.folder.remove requires params.id");
+      }
+      const document = readBookmarkStoreDocument();
+      const result = removeBookmarkFolderFromDocument(document, id);
+      if (!result.removed) throw new Error("bookmark folder not found");
+      writeBookmarksDocument(result.document);
+      bookmarks = readBookmarks(BOOKMARKS_STATE_PATH);
+      publishBrowserState();
+      const state = automationState();
+      return automationSuccess({
+        removed: result.removed,
+        bookmarks: state.bookmarks,
+        bookmarkFolders: state.bookmarkFolders,
+      });
     }
     if (body.action === "bookmark.add") {
       const url = automationBookmarkUrl(params.url);
       if (!url) throw new Error("bookmark.add requires a file, HTTP, or HTTPS URL");
       const name = String(params.name || url).trim().slice(0, 160);
-      const document = readBookmarksDocument(BOOKMARKS_PATH) || { roots: {} };
-      const result = addBookmarkToDocument(document, { url, name });
+      const document = readBookmarkStoreDocument();
+      const result = addBookmarkToDocument(document, {
+        url,
+        name,
+        parentId: params.parentId ?? params.folderId ?? "1",
+      });
       if (result.added) writeBookmarksDocument(result.document);
-      bookmarks = readBookmarks(BOOKMARKS_PATH);
+      bookmarks = readBookmarks(BOOKMARKS_STATE_PATH);
       publishBrowserState();
       return automationSuccess({
         added: result.added,
         bookmark: result.bookmark || null,
         bookmarks: automationState().bookmarks,
+        bookmarkItems: automationState().bookmarkItems,
+        bookmarkFolders: automationState().bookmarkFolders,
       });
     }
     if (body.action === "bookmark.remove") {
       const bookmark = params.id ? automationBookmark(params) : null;
       const url = automationBookmarkUrl(params.url || bookmark?.url);
       if (!url) throw new Error("bookmark.remove requires params.id or params.url");
-      const document = readBookmarksDocument(BOOKMARKS_PATH) || { roots: {} };
-      const result = removeBookmarkFromDocument(document, url);
+      const document = readBookmarkStoreDocument();
+      const result = removeBookmarkItemFromDocument(document, {
+        id: params.id,
+        url,
+      });
       if (result.removed) writeBookmarksDocument(result.document);
-      bookmarks = readBookmarks(BOOKMARKS_PATH);
+      bookmarks = readBookmarks(BOOKMARKS_STATE_PATH);
       publishBrowserState();
       return automationSuccess({
         removed: result.removed,
         bookmarks: automationState().bookmarks,
+        bookmarkItems: automationState().bookmarkItems,
+        bookmarkFolders: automationState().bookmarkFolders,
       });
     }
     if (body.action === "bookmark.open") {
@@ -3341,13 +3523,16 @@ async function createPrimaryBrowserView({
 }
 
 async function createWindow() {
-  bookmarks = readBookmarks(join(PROFILE_DIR, "Default", "Bookmarks"));
+  const bookmarkDocument = readBookmarkStoreDocument();
+  writeBookmarksDocument(bookmarkDocument);
+  bookmarks = readBookmarks(BOOKMARKS_STATE_PATH);
   historyEntries = readHistory();
   readingListEntries = readReadingList();
   const migrated = await readMigratedTabsManifest();
   const persisted = migrated ? null : await readPrimarySessionManifest();
   const persistedSpaces = await readSpaceSessionManifest();
   const windowState = readWindowState();
+  windowGivenName = windowState?.givenName || "";
   const stored = migrated || persisted;
   const restoredTabs = stored?.tabs || [];
   const showWelcome = await shouldShowWelcome({
@@ -3363,7 +3548,7 @@ async function createWindow() {
     ...(windowState?.y !== undefined ? { y: windowState.y } : {}),
     minWidth: WINDOW_MIN_WIDTH,
     minHeight: WINDOW_MIN_HEIGHT,
-    title: "ego lite",
+    title: windowGivenName || "ego lite",
     backgroundColor: "#111827",
     webPreferences: {
       contextIsolation: true,

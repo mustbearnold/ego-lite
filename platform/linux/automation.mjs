@@ -30,7 +30,15 @@ const AUTOMATION_ACTIONS = new Set([
   "tab.save",
   "tab.print",
   "tab.view-source",
+  "window.set-name",
+  "window.minimize",
+  "window.restore",
+  "window.maximize",
+  "window.unmaximize",
   "bookmarks.list",
+  "bookmark.folder.add",
+  "bookmark.folder.rename",
+  "bookmark.folder.remove",
   "bookmark.add",
   "bookmark.remove",
   "bookmark.open",
@@ -142,18 +150,108 @@ function parseBookmarkDocument(document) {
   return result;
 }
 
+function bookmarkText(value, fallback) {
+  const text = String(value ?? "").trim();
+  return text || fallback;
+}
+
+function standaloneBookmarkModel(document) {
+  const bookmarks = [];
+  const folders = [];
+  const roots = [];
+
+  function visitFolder(node, { id, parentId, index, path, depth }) {
+    if (!node || typeof node !== "object" || depth > 6) return null;
+    const title = bookmarkText(node.name, id);
+    const nextPath = [...path, title];
+    const folder = {
+      id,
+      title,
+      index,
+      parentId,
+      path: nextPath.join(" / "),
+      folders: [],
+      items: [],
+    };
+    folders.push({
+      id: folder.id,
+      title: folder.title,
+      index: folder.index,
+      parentId: folder.parentId,
+      path: folder.path,
+    });
+    for (const [childIndex, child] of (node.children || []).entries()) {
+      if (child?.type === "folder" || Array.isArray(child?.children)) {
+        const nested = visitFolder(child, {
+          id: bookmarkText(child.id, `${folder.id}/${childIndex + 1}`),
+          parentId: folder.id,
+          index: childIndex + 1,
+          path: nextPath,
+          depth: depth + 1,
+        });
+        if (nested) folder.folders.push(nested);
+        continue;
+      }
+      if (child?.type !== "url") continue;
+      const url = validBookmarkUrl(child.url);
+      const titleValue = bookmarkText(child.name, "");
+      if (!url || !titleValue || bookmarks.length >= 200) continue;
+      const item = {
+        id: bookmarkText(child.id, `${bookmarks.length + 1}`),
+        title: titleValue.slice(0, 160),
+        name: titleValue.slice(0, 160),
+        url,
+        index: childIndex + 1,
+        folderId: folder.id,
+        parentId: folder.id,
+        folder: folder.path,
+      };
+      folder.items.push(item);
+      bookmarks.push(item);
+    }
+    return folder;
+  }
+
+  for (const [rootIndex, [rootKey, root]] of Object.entries(
+    document?.roots || {},
+  ).entries()) {
+    const folder = visitFolder(root, {
+      id: bookmarkText(root.id, rootKey),
+      parentId: null,
+      index: rootIndex + 1,
+      path: [],
+      depth: 0,
+    });
+    if (folder) roots.push(folder);
+  }
+  return { bookmarks, folders, roots, bookmarkFolders: roots };
+}
+
 async function readBookmarkDocument(path) {
   try {
     const parsed = JSON.parse(await readFile(path, "utf8"));
-    return parsed && typeof parsed === "object" ? parsed : { roots: {} };
+    return parsed && typeof parsed === "object" ? parsed : null;
   } catch {
-    return { roots: {} };
+    return null;
   }
 }
 
+async function readStandaloneBookmarkDocument(profileDir) {
+  const storePath = join(profileDir, "ego-lite-bookmarks.json");
+  const chromePath = join(profileDir, "Default", "Bookmarks");
+  return (
+    (await readBookmarkDocument(storePath)) ||
+    (await readBookmarkDocument(chromePath)) ||
+    { roots: {} }
+  );
+}
+
 async function readStandaloneBookmarks(profileDir) {
-  const path = join(profileDir, "Default", "Bookmarks");
-  return parseBookmarkDocument(await readBookmarkDocument(path));
+  return parseBookmarkDocument(await readStandaloneBookmarkDocument(profileDir));
+}
+
+async function readStandaloneBookmarkModel(profileDir) {
+  return standaloneBookmarkModel(await readStandaloneBookmarkDocument(profileDir));
 }
 
 function clone(value) {
@@ -187,7 +285,26 @@ function nextBookmarkId(document) {
   return String(largest + 1);
 }
 
-function addBookmark(document, { url, name }) {
+function findStandaloneBookmarkFolder(document, folderId) {
+  const requestedId = String(folderId || "");
+  if (!requestedId) return null;
+  function visit(node) {
+    if (!node || typeof node !== "object") return null;
+    if (node.type === "folder" && String(node.id) === requestedId) return node;
+    for (const child of node.children || []) {
+      const found = visit(child);
+      if (found) return found;
+    }
+    return null;
+  }
+  for (const root of Object.values(document?.roots || {})) {
+    const found = visit(root);
+    if (found) return found;
+  }
+  return null;
+}
+
+function addBookmark(document, { url, name, parentId = "1" }) {
   const canonical = validBookmarkUrl(url);
   const title = String(name || "").trim().slice(0, 160);
   if (!canonical || !title) return { document: clone(document), added: false };
@@ -196,6 +313,8 @@ function addBookmark(document, { url, name }) {
     (bookmark) => bookmark.url === canonical,
   );
   if (existing) return { document: next, added: false, bookmark: existing };
+  const parent = findStandaloneBookmarkFolder(next, parentId || "1");
+  if (!parent) return { document: next, added: false };
   const bookmark = {
     date_added: String((Date.now() + 11644473600000) * 1000),
     guid: randomUUID(),
@@ -204,22 +323,34 @@ function addBookmark(document, { url, name }) {
     type: "url",
     url: canonical,
   };
-  next.roots.bookmark_bar.children.push(bookmark);
+  parent.children ||= [];
+  parent.children.push(bookmark);
+  const modelBookmark = standaloneBookmarkModel(next).bookmarks.find(
+    (candidate) => candidate.id === bookmark.id,
+  );
   return {
     document: next,
     added: true,
-    bookmark: { id: bookmark.id, name: bookmark.name, url: bookmark.url, folder: "Bookmarks bar" },
+    bookmark: modelBookmark || {
+      id: bookmark.id,
+      name: bookmark.name,
+      url: bookmark.url,
+      folder: "Bookmarks bar",
+    },
   };
 }
 
-function removeBookmark(document, url) {
+function removeBookmarkItem(document, { id, url } = {}) {
   const canonical = validBookmarkUrl(url);
+  const requestedId = id === undefined || id === null ? null : String(id);
   const next = clone(document);
   let removed = 0;
   function visit(node) {
     if (!Array.isArray(node?.children)) return;
     node.children = node.children.filter((child) => {
-      if (child?.type === "url" && validBookmarkUrl(child.url) === canonical) {
+      const matchesId = requestedId && String(child?.id || "") === requestedId;
+      const matchesUrl = canonical && validBookmarkUrl(child.url) === canonical;
+      if (child?.type === "url" && (matchesId || matchesUrl)) {
         removed += 1;
         return false;
       }
@@ -227,18 +358,83 @@ function removeBookmark(document, url) {
       return true;
     });
   }
-  if (canonical) {
+  if (canonical || requestedId) {
     for (const root of Object.values(next.roots || {})) visit(root);
   }
   return { document: next, removed };
 }
 
+function addBookmarkFolder(document, { title, parentId = "1" } = {}) {
+  const name = String(title || "").trim().slice(0, 160);
+  const next = ensureBookmarkBar(document);
+  const parent = findStandaloneBookmarkFolder(next, parentId || "1");
+  if (!name || !parent) return { document: next, added: false, folder: null };
+  const folder = {
+    children: [],
+    date_added: String((Date.now() + 11644473600000) * 1000),
+    date_modified: "0",
+    guid: randomUUID(),
+    id: nextBookmarkId(next),
+    name,
+    type: "folder",
+  };
+  parent.children ||= [];
+  parent.children.push(folder);
+  return {
+    document: next,
+    added: true,
+    folder: standaloneBookmarkModel(next).folders.find(
+      (candidate) => candidate.id === folder.id,
+    ),
+  };
+}
+
+function renameBookmarkFolder(document, { id, title } = {}) {
+  const next = ensureBookmarkBar(document);
+  const folder = findStandaloneBookmarkFolder(next, id);
+  const name = String(title || "").trim().slice(0, 160);
+  if (!folder || !name) return { document: next, renamed: false, folder: null };
+  folder.name = name;
+  return {
+    document: next,
+    renamed: true,
+    folder: standaloneBookmarkModel(next).folders.find(
+      (candidate) => candidate.id === String(id),
+    ),
+  };
+}
+
+function removeBookmarkFolder(document, folderId) {
+  const requestedId = String(folderId || "");
+  const next = clone(document);
+  let removed = 0;
+  function visit(node) {
+    if (!Array.isArray(node?.children)) return;
+    node.children = node.children.filter((child) => {
+      if (child?.type === "folder" && String(child.id) === requestedId) {
+        removed += 1;
+        return false;
+      }
+      visit(child);
+      return true;
+    });
+  }
+  for (const root of Object.values(next.roots || {})) visit(root);
+  return { document: next, removed };
+}
+
 async function writeBookmarkDocument(profileDir, document) {
-  const path = join(profileDir, "Default", "Bookmarks");
-  await mkdir(dirname(path), { recursive: true });
-  const temporaryPath = `${path}.${process.pid}.automation.tmp`;
-  await writeFile(temporaryPath, `${JSON.stringify(document, null, 2)}\n`);
-  await rename(temporaryPath, path);
+  const serialized = `${JSON.stringify(document, null, 2)}\n`;
+  const paths = [
+    join(profileDir, "ego-lite-bookmarks.json"),
+    join(profileDir, "Default", "Bookmarks"),
+  ];
+  for (const path of paths) {
+    await mkdir(dirname(path), { recursive: true });
+    const temporaryPath = `${path}.${process.pid}.automation.tmp`;
+    await writeFile(temporaryPath, serialized);
+    await rename(temporaryPath, path);
+  }
 }
 
 function targetId(params, selectedTargetId) {
@@ -453,29 +649,51 @@ async function standaloneState(host) {
     null;
   if (activeTabId) host.selectedTargetId = activeTabId;
   const spaces = (await host.listTaskSpaces()).taskSpaces || [];
+  const bookmarkModel = await readStandaloneBookmarkModel(host.profileDir);
+  const tabs = listedTabs.map((tab) => ({
+    id: tab.targetId,
+    ...tab,
+    active: tab.targetId === activeTabId,
+  }));
+  const activeTab = tabs.find((tab) => tab.active) || null;
+  const activeTabIndex = activeTab
+    ? tabs.findIndex((tab) => tab.id === activeTab.id) + 1
+    : null;
+  const windowTitle = host.isElectron ? "ego lite" : "Chromium";
   return {
     platform: "linux",
     profileId: host.profileId || "default",
     serverName: host.serverName || "default",
     window: {
       id: "main",
-      title: host.isElectron ? "ego lite" : "Chromium",
+      name: windowTitle,
+      title: windowTitle,
+      givenName: "",
+      index: 1,
       active: true,
       visible: !Boolean(process.env.EGO_LITE_HEADLESS),
       minimized: false,
       maximized: false,
+      zoomed: false,
       fullscreen: false,
       bounds: null,
+      closeable: null,
+      minimizable: null,
+      resizable: null,
+      zoomable: null,
+      activeTab,
+      activeTabIndex,
+      mode: activeTab?.private ? "incognito" : "normal",
     },
     scope: host.currentSpace()?.id ?? null,
     activeTabId,
-    tabs: listedTabs.map((tab) => ({
-      id: tab.targetId,
-      ...tab,
-      active: tab.targetId === activeTabId,
-    })),
+    tabs,
     taskSpaces: spaces,
-    bookmarks: await readStandaloneBookmarks(host.profileDir),
+    bookmarks: bookmarkModel.bookmarks.map(
+      ({ id, name, url, folder }) => ({ id, name, url, folder }),
+    ),
+    bookmarkItems: bookmarkModel.bookmarks,
+    bookmarkFolders: bookmarkModel.bookmarkFolders,
     capabilities: {
       windowActions: false,
       tabActions: true,
@@ -534,7 +752,17 @@ export async function runStandaloneAutomation(host, request) {
   if (request.action === "spaces.list") {
     return automationSuccess(await host.listTaskSpaces());
   }
-  if (request.action === "window.focus" || request.action === "window.fullscreen") {
+  if (
+    [
+      "window.focus",
+      "window.fullscreen",
+      "window.set-name",
+      "window.minimize",
+      "window.restore",
+      "window.maximize",
+      "window.unmaximize",
+    ].includes(request.action)
+  ) {
     return automationFailure(
       "EGO_AUTOMATION_UNSUPPORTED",
       `${request.action} is only available in the Electron desktop host`,
@@ -584,20 +812,79 @@ export async function runStandaloneAutomation(host, request) {
     return automationSuccess({ state: await standaloneTabAction(host, request) });
   }
   if (request.action === "bookmarks.list") {
-    return automationSuccess({ bookmarks: await readStandaloneBookmarks(host.profileDir) });
+    const state = await standaloneState(host);
+    return automationSuccess({
+      bookmarks: state.bookmarks,
+      bookmarkItems: state.bookmarkItems,
+      bookmarkFolders: state.bookmarkFolders,
+    });
+  }
+  if (request.action === "bookmark.folder.add") {
+    const title = String(request.params.title ?? request.params.name ?? "").trim();
+    if (!title) throw new Error("bookmark.folder.add requires params.title");
+    const document = await readStandaloneBookmarkDocument(host.profileDir);
+    const result = addBookmarkFolder(document, {
+      title,
+      parentId: request.params.parentId ?? request.params.folderId ?? "1",
+    });
+    if (!result.added) throw new Error("bookmark folder parent not found");
+    await writeBookmarkDocument(host.profileDir, result.document);
+    const state = await standaloneState(host);
+    return automationSuccess({
+      added: true,
+      folder: result.folder,
+      bookmarkFolders: state.bookmarkFolders,
+    });
+  }
+  if (request.action === "bookmark.folder.rename") {
+    const id = request.params.id ?? request.params.folderId;
+    const title = String(request.params.title ?? request.params.name ?? "").trim();
+    if (id === undefined || !title) {
+      throw new Error(
+        "bookmark.folder.rename requires params.id and params.title",
+      );
+    }
+    const document = await readStandaloneBookmarkDocument(host.profileDir);
+    const result = renameBookmarkFolder(document, { id, title });
+    if (!result.renamed) throw new Error("bookmark folder not found");
+    await writeBookmarkDocument(host.profileDir, result.document);
+    const state = await standaloneState(host);
+    return automationSuccess({
+      renamed: true,
+      folder: result.folder,
+      bookmarkFolders: state.bookmarkFolders,
+    });
+  }
+  if (request.action === "bookmark.folder.remove") {
+    const id = request.params.id ?? request.params.folderId;
+    if (id === undefined) {
+      throw new Error("bookmark.folder.remove requires params.id");
+    }
+    const document = await readStandaloneBookmarkDocument(host.profileDir);
+    const result = removeBookmarkFolder(document, id);
+    if (!result.removed) throw new Error("bookmark folder not found");
+    await writeBookmarkDocument(host.profileDir, result.document);
+    const state = await standaloneState(host);
+    return automationSuccess({
+      removed: result.removed,
+      bookmarks: state.bookmarks,
+      bookmarkFolders: state.bookmarkFolders,
+    });
   }
   if (request.action === "bookmark.add") {
-    const document = await readBookmarkDocument(join(host.profileDir, "Default", "Bookmarks"));
+    const document = await readStandaloneBookmarkDocument(host.profileDir);
     const result = addBookmark(document, request.params);
     if (result.added) await writeBookmarkDocument(host.profileDir, result.document);
+    const state = await standaloneState(host);
     return automationSuccess({
       added: result.added,
       bookmark: result.bookmark || null,
-      bookmarks: await readStandaloneBookmarks(host.profileDir),
+      bookmarks: state.bookmarks,
+      bookmarkItems: state.bookmarkItems,
+      bookmarkFolders: state.bookmarkFolders,
     });
   }
   if (request.action === "bookmark.remove") {
-    const bookmarkDocumentPath = join(host.profileDir, "Default", "Bookmarks");
     const existingBookmarks = await readStandaloneBookmarks(host.profileDir);
     const selected = request.params.id
       ? existingBookmarks.find(
@@ -605,10 +892,19 @@ export async function runStandaloneAutomation(host, request) {
         )
       : null;
     const url = request.params.url || selected?.url;
-    const document = await readBookmarkDocument(bookmarkDocumentPath);
-    const result = removeBookmark(document, url);
+    const document = await readStandaloneBookmarkDocument(host.profileDir);
+    const result = removeBookmarkItem(document, {
+      id: request.params.id,
+      url,
+    });
     if (result.removed) await writeBookmarkDocument(host.profileDir, result.document);
-    return automationSuccess({ removed: result.removed, bookmarks: await readStandaloneBookmarks(host.profileDir) });
+    const state = await standaloneState(host);
+    return automationSuccess({
+      removed: result.removed,
+      bookmarks: state.bookmarks,
+      bookmarkItems: state.bookmarkItems,
+      bookmarkFolders: state.bookmarkFolders,
+    });
   }
   if (request.action === "bookmark.open") {
     const bookmarks = await readStandaloneBookmarks(host.profileDir);
@@ -648,20 +944,18 @@ export async function runStandaloneAutomation(host, request) {
     if (!url || !["http:", "https:"].some((protocol) => url.startsWith(protocol))) {
       throw new Error("bookmarks are available only for HTTP(S) tabs");
     }
-    const document = await readBookmarkDocument(join(host.profileDir, "Default", "Bookmarks"));
+    const document = await readStandaloneBookmarkDocument(host.profileDir);
     const existing = (await readStandaloneBookmarks(host.profileDir)).some(
       (bookmark) => bookmark.url === url,
     );
     const result = existing
-      ? removeBookmark(document, url)
+      ? removeBookmarkItem(document, { url })
       : addBookmark(document, { url, name: value.name || url });
     if (existing ? result.removed > 0 : result.added) {
       await writeBookmarkDocument(host.profileDir, result.document);
     }
-    return automationSuccess({
-      bookmarked: !existing,
-      bookmarks: await readStandaloneBookmarks(host.profileDir),
-    });
+    const state = await standaloneState(host);
+    return automationSuccess({ bookmarked: !existing, state });
   }
   return automationFailure("EGO_AUTOMATION_UNKNOWN_ACTION", request.action);
 }

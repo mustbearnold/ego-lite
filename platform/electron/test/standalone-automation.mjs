@@ -158,6 +158,10 @@ try {
 
   const initial = await automation({ version: 1, action: "state" });
   assert.equal(initial.capabilities.fullWindowInventory, false);
+  assert.equal(initial.window.index, 1);
+  assert.equal(initial.window.activeTabIndex, 1);
+  assert.equal(initial.window.mode, "normal");
+  assert.equal(initial.window.closeable, null);
   assert.equal(initial.tabs.length, 1);
 
   const created = await automation({
@@ -205,6 +209,41 @@ try {
   for (const action of ["tab.undo", "tab.redo", "tab.cut", "tab.copy", "tab.paste", "tab.select-all"]) {
     await automation({ version: 1, action, params: { id: tabId } });
   }
+
+  const folderAdded = await automation({
+    version: 1,
+    action: "bookmark.folder.add",
+    params: { title: "Standalone Folder" },
+  });
+  assert.equal(folderAdded.added, true);
+  const nestedBookmark = await automation({
+    version: 1,
+    action: "bookmark.add",
+    params: {
+      url: `${fixtureUrl}?nested=1`,
+      name: "Standalone nested",
+      parentId: folderAdded.folder.id,
+    },
+  });
+  assert.equal(nestedBookmark.bookmark.folderId, folderAdded.folder.id);
+  const renamedFolder = await automation({
+    version: 1,
+    action: "bookmark.folder.rename",
+    params: { id: folderAdded.folder.id, title: "Renamed Standalone Folder" },
+  });
+  assert.equal(renamedFolder.folder.title, "Renamed Standalone Folder");
+  const removedNestedBookmark = await automation({
+    version: 1,
+    action: "bookmark.remove",
+    params: { id: nestedBookmark.bookmark.id },
+  });
+  assert.equal(removedNestedBookmark.removed, 1);
+  const removedFolder = await automation({
+    version: 1,
+    action: "bookmark.folder.remove",
+    params: { id: folderAdded.folder.id },
+  });
+  assert.equal(removedFolder.removed, 1);
 
   const added = await automation({
     version: 1,

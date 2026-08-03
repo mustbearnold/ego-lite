@@ -36,15 +36,102 @@ function visit(node, folder, bookmarks) {
   for (const child of node.children) visit(child, nextFolder, bookmarks);
 }
 
-export function parseBookmarksDocument(document) {
+function textValue(value, fallback) {
+  const text = String(value ?? "").trim();
+  return text || fallback;
+}
+
+function folderNodeId(node, fallback) {
+  return textValue(node?.id, fallback);
+}
+
+function itemNodeId(node, fallback) {
+  return textValue(node?.id, fallback);
+}
+
+function buildBookmarkModel(document) {
   const bookmarks = [];
-  const roots = document?.roots;
-  if (!roots || typeof roots !== "object") return bookmarks;
-  for (const root of Object.values(roots)) {
-    visit(root, [], bookmarks);
-    if (bookmarks.length >= MAX_BOOKMARKS) break;
+  const folders = [];
+  const roots = [];
+  const rootEntries = Object.entries(document?.roots || {});
+
+  function visitFolder(node, { id, parentId, index, path, depth }) {
+    if (!node || typeof node !== "object" || depth > MAX_DEPTH) return null;
+    const title = textValue(node.name, id);
+    const nextPath = [...path, title];
+    const folder = {
+      id,
+      title,
+      index,
+      parentId,
+      path: nextPath.join(" / "),
+      folders: [],
+      items: [],
+    };
+    folders.push({
+      id: folder.id,
+      title: folder.title,
+      index: folder.index,
+      parentId: folder.parentId,
+      path: folder.path,
+    });
+    for (const [childIndex, child] of (node.children || []).entries()) {
+      if (child?.type === "folder" || Array.isArray(child?.children)) {
+        const childId = folderNodeId(
+          child,
+          `${folder.id}/${childIndex + 1}`,
+        );
+        const nested = visitFolder(child, {
+          id: childId,
+          parentId: folder.id,
+          index: childIndex + 1,
+          path: nextPath,
+          depth: depth + 1,
+        });
+        if (nested) folder.folders.push(nested);
+        continue;
+      }
+      if (child?.type !== "url") continue;
+      const url = bookmarkUrl(child.url);
+      const titleValue = textValue(child.name, "");
+      if (!url || !titleValue || bookmarks.length >= MAX_BOOKMARKS) continue;
+      const item = {
+        id: itemNodeId(child, `${bookmarks.length + 1}`),
+        title: titleValue.slice(0, 160),
+        name: titleValue.slice(0, 160),
+        url,
+        index: childIndex + 1,
+        folderId: folder.id,
+        parentId: folder.id,
+        folder: folder.path,
+      };
+      folder.items.push(item);
+      bookmarks.push(item);
+    }
+    return folder;
   }
-  return bookmarks;
+
+  for (const [rootIndex, [rootKey, root]] of rootEntries.entries()) {
+    const folder = visitFolder(root, {
+      id: folderNodeId(root, rootKey),
+      parentId: null,
+      index: rootIndex + 1,
+      path: [],
+      depth: 0,
+    });
+    if (folder) roots.push(folder);
+  }
+  return { bookmarks, folders, roots, bookmarkFolders: roots };
+}
+
+export function parseBookmarkModel(document) {
+  return buildBookmarkModel(document);
+}
+
+export function parseBookmarksDocument(document) {
+  return buildBookmarkModel(document).bookmarks.map(
+    ({ id, name, url, folder }) => ({ id, name, url, folder }),
+  );
 }
 
 export function readBookmarksDocument(path) {
@@ -58,6 +145,10 @@ export function readBookmarksDocument(path) {
 
 export function readBookmarks(path) {
   return parseBookmarksDocument(readBookmarksDocument(path));
+}
+
+export function readBookmarkModel(path) {
+  return parseBookmarkModel(readBookmarksDocument(path));
 }
 
 function cloneDocument(document) {
@@ -114,12 +205,14 @@ function canonicalUrl(value) {
 
 export function addBookmarkToDocument(
   document,
-  { url, name, dateAdded = Date.now() } = {},
+  { url, name, parentId = "1", dateAdded = Date.now() } = {},
 ) {
   const canonical = canonicalUrl(url);
   const title = String(name || "").trim();
   if (!canonical || !title) return { document: cloneDocument(document), added: false };
   const next = ensureBookmarkBar(document);
+  const parent = findFolderNode(next, parentId || "1");
+  if (!parent) return { document: next, added: false };
   const existing = parseBookmarksDocument(next).find(
     (bookmark) => bookmark.url === canonical,
   );
@@ -133,28 +226,116 @@ export function addBookmarkToDocument(
     type: "url",
     url: canonical,
   };
-  next.roots.bookmark_bar.children.push(bookmark);
+  parent.children ||= [];
+  parent.children.push(bookmark);
   return {
     document: next,
     added: true,
-    bookmark: {
-      id: bookmark.id,
-      name: bookmark.name,
-      url: bookmark.url,
-      folder: "Bookmarks bar",
-    },
+    bookmark:
+      parseBookmarkModel(next).bookmarks.find(
+        (candidate) => candidate.id === bookmark.id,
+      ) || {
+        id: bookmark.id,
+        name: bookmark.name,
+        url: bookmark.url,
+        folder: "Bookmarks bar",
+      },
   };
 }
 
-export function removeBookmarkFromDocument(document, url) {
+export function removeBookmarkItemFromDocument(document, { id, url } = {}) {
   const canonical = canonicalUrl(url);
+  const requestedId = id === undefined || id === null ? null : String(id);
   const next = cloneDocument(document);
-  if (!canonical) return { document: next, removed: 0 };
+  if (!canonical && !requestedId) return { document: next, removed: 0 };
   let removed = 0;
   function removeFrom(node) {
     if (!Array.isArray(node?.children)) return;
     node.children = node.children.filter((child) => {
-      if (child?.type === "url" && canonicalUrl(child.url) === canonical) {
+      const matchesId = requestedId && String(child?.id || "") === requestedId;
+      const matchesUrl = canonical && canonicalUrl(child?.url) === canonical;
+      if (child?.type === "url" && (matchesId || matchesUrl)) {
+        removed += 1;
+        return false;
+      }
+      removeFrom(child);
+      return true;
+    });
+  }
+  for (const root of Object.values(next.roots || {})) removeFrom(root);
+  return { document: next, removed };
+}
+
+export function removeBookmarkFromDocument(document, url) {
+  return removeBookmarkItemFromDocument(document, { url });
+}
+
+function findFolderNode(document, folderId) {
+  const requestedId = String(folderId || "");
+  if (!requestedId) return null;
+  for (const root of Object.values(document?.roots || {})) {
+    let found = null;
+    visitNodes(root, (node) => {
+      if (!found && node?.type === "folder" && String(node.id) === requestedId) {
+        found = node;
+      }
+    });
+    if (found) return found;
+  }
+  return null;
+}
+
+export function addBookmarkFolderToDocument(
+  document,
+  { title, parentId = "1" } = {},
+) {
+  const name = String(title || "").trim().slice(0, 160);
+  const next = ensureBookmarkBar(document);
+  const parent = findFolderNode(next, parentId || "1");
+  if (!name || !parent) return { document: next, added: false, folder: null };
+  const folder = {
+    children: [],
+    date_added: String((Date.now() + 11644473600000) * 1000),
+    date_modified: "0",
+    guid: randomUUID(),
+    id: nextBookmarkId(next),
+    name,
+    type: "folder",
+  };
+  parent.children ||= [];
+  parent.children.push(folder);
+  return {
+    document: next,
+    added: true,
+    folder: parseBookmarkModel(next).folders.find(
+      (candidate) => candidate.id === folder.id,
+    ),
+  };
+}
+
+export function renameBookmarkFolderInDocument(document, { id, title } = {}) {
+  const next = ensureBookmarkBar(document);
+  const folder = findFolderNode(next, id);
+  const name = String(title || "").trim().slice(0, 160);
+  if (!folder || !name) return { document: next, renamed: false, folder: null };
+  folder.name = name;
+  return {
+    document: next,
+    renamed: true,
+    folder: parseBookmarkModel(next).folders.find(
+      (candidate) => candidate.id === String(id),
+    ),
+  };
+}
+
+export function removeBookmarkFolderFromDocument(document, folderId) {
+  const requestedId = String(folderId || "");
+  const next = cloneDocument(document);
+  let removed = 0;
+  function removeFrom(node) {
+    if (!Array.isArray(node?.children)) return;
+    node.children = node.children.filter((child) => {
+      if (child?.type === "folder" && String(child.id) === requestedId) {
         removed += 1;
         return false;
       }
